@@ -312,7 +312,11 @@ pub const Table = struct {
         var file_contents = try file.readToEndAlloc(allocator, 1024 * 1024 * 16); // 16MiB
         defer allocator.free(file_contents);
 
-        const header = try WbfHeader.parse(file_contents);
+        var file_offset: usize = 0;
+
+        const header = try WbfHeader.parse(file_contents[0..@sizeOf(WbfHeader)]);
+
+        file_offset += @sizeOf(WbfHeader);
 
         result.frame_rate = if (header.frame_rate == 0) 85 else header.frame_rate;
         result.mode_count = header.mode_count + 1; // ?
@@ -324,34 +328,51 @@ pub const Table = struct {
         }
 
         // Verify CRC32 checksum
-        const crc_verif = crc32_checksum(file_contents[4..]);
+        const zeroes = [_]u8{0, 0, 0, 0};
+        var crc_verif: u32 = 0;
+        crc_verif = crc32_checksum(crc_verif, &zeroes);
+        crc_verif = crc32_checksum(crc_verif, file_contents[4..]);
+
         if (header.checksum != crc_verif) {
             std.debug.print("Corrupted WBF file: expected CRC32 0x{X}, actual 0x{X}\n", .{header.checksum, crc_verif});
             return error.InvalidWbfHeader;
         }
 
         // Parse temperature table
-        const count = header.temp_range_count + 2;
-        result.temperatures = try parse_temperatures(allocator, file_contents[@sizeOf(WbfHeader)..count]);
+        const temperature_count = header.temp_range_count + 2;
+        result.temperatures = try parse_temperatures(allocator, &header, file_contents[file_offset..file_offset+temperature_count + 1]);
+
+        file_offset += temperature_count;
+
+        // Skip extra information (contains a string equal to the file name)
+        const file_name_string_len = file_contents[file_offset];
+        file_offset += file_name_string_len;
+
+        // TODO: Parse waveforms
 
         return result;
     }
 
-    fn parse_temperatures(allocator: std.mem.Allocator, temperatures_bytes_and_checksum: []const u8) ![]Temperature {
-        var temperatures = try allocator.alloc(Temperature, temperatures_bytes_and_checksum.len);
-        for (temperatures_bytes_and_checksum, 0..temperatures_bytes_and_checksum.len - 1) |value, i| {
+    fn parse_temperatures(allocator: std.mem.Allocator, header: *const WbfHeader, temperatures_and_checksum: []const u8) ![]Temperature {
+        _ = header;
+
+        var temperatures = try allocator.alloc(Temperature, temperatures_and_checksum.len);
+        for (temperatures_and_checksum, 0..) |value, i| {
             temperatures[i] = @as(i8, @bitCast(value));
         }
 
-        const checksum = basic_checksum(temperatures_bytes_and_checksum[0..temperatures_bytes_and_checksum.len - 1]);
-        const checksum_expected = temperatures_bytes_and_checksum[temperatures_bytes_and_checksum.len - 1];
+        const checksum = basic_checksum(temperatures_and_checksum[0..temperatures_and_checksum.len - 1]);
+        const checksum_expected = temperatures_and_checksum[temperatures_and_checksum.len - 1];
 
         if (checksum != checksum_expected) {
+            std.debug.print("Corrupted WBF temperatures: expected checksum 0x{X}, actual 0x{X}\n", .{checksum_expected, checksum});
             return error.CorruptedWBFTemperatures;
         }
 
         return temperatures;
     }
+
+    // fn find_waveform_blocks(header: *const WbfHeader, )
 };
 
 const Temperature = i8;
@@ -402,12 +423,13 @@ const crc32_table = [_]u32{
     0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
 };
 
-pub fn crc32_checksum(data: []const u8) u32 {
-    var crc: u32 = 0xFFFFFFFF;
+pub fn crc32_checksum(initial: u32, data: []const u8) u32 {
+    var crc: u32 = initial ^ 0xFFFFFFFF;
 
     for (data) |byte| {
-        crc = (crc >> 8) ^ crc32_table[(crc ^ @as(u8, @intCast(byte))) & 0xFF];
+        //crc = (crc >> 8) ^ crc32_table[(crc ^ @as(u8, @intCast(byte))) & 0xFF];
+        crc = crc32_table[(crc ^ byte) & 0xff] ^ (crc >> 8);
     }
 
-    return ~crc;
+    return crc ^ 0xFFFFFFFF;
 }
