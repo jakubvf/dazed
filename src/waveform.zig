@@ -1,4 +1,23 @@
+// Understanding waveforms: https://github.com/Modos-Labs/Glider?tab=readme-ov-file#understanding-waveform
+// TODO: Test waveform.zig against the real waveform file from rm2.
+//
+//
+
 const std = @import("std");
+
+const Phase = enum(u8) {
+    Noop = 0b00,
+    Black = 0b01,
+    White = 0b10,
+};
+
+/// Cell grayscale intensity (5 bits).
+/// Only even values are used. 0 denotes full black, 30 full white
+// TODO: Make Intensity a u5
+const intensity_values = 1 << 5;
+const PhaseMatrix = [intensity_values][intensity_values]Phase;
+const Waveform = std.ArrayList(PhaseMatrix);
+const Lookup = std.ArrayList(std.ArrayList(usize));
 
 fn barcode_symbol_to_int(symbol: u8) ?i16 {
     if (symbol >= '0' and symbol <= '9') {
@@ -96,6 +115,7 @@ pub fn discover_wbf_file(allocator: std.mem.Allocator) !?[]const u8 {
         // Ignore invalid files
         const wbf_header = WbfHeader.parse(&wbf_header_bytes) catch continue;
 
+        // FIXME: fpl_lot doesn't actually checkout anymore since software v3.
         if (wbf_header.fpl_lot == fpl_lot) {
             return try std.mem.join(allocator, "/", &[_][]const u8{ searched_dir, entry.name });
         }
@@ -239,32 +259,31 @@ const WbfHeader = packed struct {
 /// See <https://www.waveshare.com/w/upload/c/c4/E-paper-mode-declaration.pdf>
 ///
 const ModeKind = enum {
-    Unknown,
+    unknown,
 
     // Initialization mode used to force all pixels to go back to a
     // known white state
-    Init,
+    init,
 
     // Fast, non-flashy update that only supports transitions to black or white
-    Du,
+    du,
 
     // Same as DU but supports 4 gray tones
-    Du4,
+    du4,
 
     // Faster than DU and only supports transitions *between* black and white
-    A2,
+    a2,
 
     // Full resolution mode (16 gray tones)
-    Gc16,
+    gc16,
 
     // Full resolution mode with support for Regal
-    Glr16,
+    glr16,
 };
 
 pub const ModeID = u8;
 
-pub const Table = struct {
-    // Display frame rate
+pub const Table = struct {// Display frame rate
     frame_rate: u8,
     // Number of available modes
     mode_count: ModeID,
@@ -276,9 +295,9 @@ pub const Table = struct {
     // All available waveforms. This table may be smaller than
     // `(temperatures.size() - 1) * mode_count` since some modes/temperatures
     // combinations reuse the same waveform
-    // waveforms: std.ArrayList(Waveform),
+    waveforms: []Waveform,
     // Vector for retrieving the waveform for any given mode and temperature
-    // waveform_lookup: Lookup,
+    waveform_lookup: Lookup,
 
     //
     // Scan available modes and assign them a mode kind based on which
@@ -337,8 +356,7 @@ pub const Table = struct {
         const temperature_count = header.temp_range_count + 2; // + 2 cause IDK why
         result.temperatures = try parse_temperatures(
             allocator,
-            &header,
-            file_contents[file_offset .. file_offset + temperature_count + 1], // +1 to include checksum
+            file_contents[file_offset..][temperature_count + 1], // +1 to include checksum
         );
 
         file_offset += temperature_count;
@@ -346,16 +364,119 @@ pub const Table = struct {
 
         // Skip extra information (contains a string equal to the file name)
         const file_name_string_len = file_contents[file_offset];
-        // std.debug.print("{s}\n", .{file_contents[file_offset + 1..file_offset+file_name_string_len]});
-        file_offset += file_name_string_len;
-        // TODO: Parse waveforms
+        file_offset += file_name_string_len + 2;
+
+        // Parse waveforms
+        var blocks = find_waveform_blocks(allocator, header, file_contents, file_contents[file_offset..]);
+        blocks.append(blocks.items.len);
+
+        const waveforms_and_lookup = parseWaveforms(allocator, header, blocks, file_contents, file_contents[file_offset..]);
 
         return result;
     }
 
-    fn parse_temperatures(allocator: std.mem.Allocator, header: *const WbfHeader, temperatures_and_checksum: []const u8) ![]Temperature {
-        _ = header;
+    const WaveformsAndLookup = struct {
+        waveforms: []Waveform,
+        lookup: Lookup,
+    };
 
+    fn parseWaveforms(allocator: std.mem.Allocator, header: *const WbfHeader, blocks: []const u32, file: []const u8, table: []const u8) !WaveformsAndLookup {
+        var waveforms = std.ArrayList(Waveform).init(allocator);
+
+        var block_iterator: usize = 0;
+        while (block_iterator + 1 != blocks.len) : (block_iterator += 1) {
+            waveforms.append(parseWaveformBlock(
+                allocator,
+                file[blocks[block_iterator]],
+                file[blocks[block_iterator + 1]],
+            ));
+        }
+
+        const mode_count = header.mode_count + 1;
+        const temp_count = header.temp_range_count + 1;
+        var waveform_lookup = try Lookup.initCapacity(allocator, mode_count);
+
+        var mode: usize = 0;
+        while(mode < mode_count) : (mode += 1) {
+            const mode_begin = file[try parsePointer(table)];
+            var temp_lookup = try std.ArrayList(usize).initCapacity(allocator, temp_count);
+
+            var temp: usize = 0;
+            while(temp < temp_count) : (temp+=1) {
+                const waveform_begin = try parsePointer(mode_begin);
+                std.sort.lowerBound(u32, key: anytype, items: []const T, context: anytype, comptime lessThan: fn(context:@TypeOf(context), lhs:@TypeOf(key), rhs:T)bool)
+                const LowerBound = struct {
+                    fn run() {
+
+                    }
+                };
+
+            }
+        }
+    }
+
+    /// Parse a waveform block in a WBF file.
+    fn parseWaveformBlock(allocator: std.mem.Allocator, block: []const u8) !Waveform {
+        var matrix = PhaseMatrix{};
+        var result = Waveform.init(allocator);
+
+        var begin: usize = 0;
+        const end = block.len - 2;
+
+        var i: u8 = 0;
+        var j: u8 = 0;
+        var repeat_mode = false;
+
+        while (begin != end) {
+            const byte = block[begin];
+            begin += 1;
+
+            if (byte == 0xFC) {
+                repeat_mode = !repeat_mode;
+                continue;
+            }
+
+            const p4 = Phase{byte & 3};
+            const p3 = Phase{(byte >> 2) & 3};
+            const p2 = Phase{(byte >> 4) & 3};
+            const p1 = Phase{byte >> 6};
+
+            var repeat: usize = 1;
+
+            if (repeat_mode and begin != end) {
+                // In repeat_mode, each byte is followed by a repetition number;
+                // otherwise, this number is assumed to be 1
+                repeat = block[begin] + 1;
+                begin += 1;
+
+                if (byte == 0xff) {
+                    break;
+                }
+            }
+
+            var n: usize = 0;
+            while (n < repeat) : (n += 1) {
+                matrix[j][i] = p1;
+                matrix[j + 1][i] = p2;
+                matrix[j + 2][i] = p3;
+                matrix[j + 3][i] = p4;
+
+                if (j == intensity_values) {
+                    j = 0;
+                    i += 1;
+                }
+
+                if (i == intensity_values) {
+                    i = 0;
+                    try result.append(matrix);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    fn parse_temperatures(allocator: std.mem.Allocator, temperatures_and_checksum: []const u8) ![]Temperature {
         var temperatures = try allocator.alloc(Temperature, temperatures_and_checksum.len);
         for (temperatures_and_checksum, 0..) |value, i| {
             temperatures[i] = @as(i8, @bitCast(value));
@@ -373,21 +494,26 @@ pub const Table = struct {
     }
 
     // Computes the ordered list of waveform block addresses in a WBF file.
-    fn find_waveform_blocks(allocator: std.mem.Allocator, header: *const WbfHeader, file: []const u8, table: []const u8) []u8 {
+    fn find_waveform_blocks(allocator: std.mem.Allocator, header: *const WbfHeader, file: []const u8, table: []const u8) std.ArrayList(u32) {
         var result = std.AutoArrayHashMap(u32, void).init(allocator);
 
         const mode_count = header.mode_count + 1;
         const temp_count = header.temp_range_count + 1;
 
+        // I haven't done any testing yet.. but
+        // TODO: is this working as expected?
         var mode_index: usize = 0;
         while (mode_index < mode_count) : (mode_index += 1) {
-            var mode = file[@as(usize, @intCast(try parsePointer(table)))];
+            const mode = file[@as(usize, @intCast(try parsePointer(table)))];
 
             var temperature: usize = 0;
             while (temperature < temp_count) : (temperature += 1) {
-                result.put(try parsePointer(mode));
+                try result.put(try parsePointer(mode));
             }
         }
+
+        // TODO: Does result leak?
+        return std.ArrayList(u32).fromOwnedSlice(result.values());
     }
 
     // Read a pointer field to a WBF file section.

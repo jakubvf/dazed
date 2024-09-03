@@ -70,8 +70,8 @@ const FramebufferDimensions = struct {
     }
 };
 
-const Controller = struct {
-    fn openRemarmable2() Controller {
+pub const Controller = struct {
+    pub fn openRemarmable2() Controller {
         return byName(
         "mxs-lcdif",
         "sy7636a_temperature",
