@@ -1,14 +1,16 @@
 const std = @import("std");
-const Waveform = @import("waveform.zig");
 const Controller = @import("controller.zig");
+const Waveformer = @import("waveforms/waveformer2.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // defer gpa.deinit();
     const allocator = gpa.allocator();
-    const wbf_path = (try Waveform.discover_wbf_file(allocator)).?;
-    std.debug.print("Found WBF file: {s}\n", .{wbf_path});
-    const table = Waveform.Table.from_wbf(allocator, wbf_path);
-    std.debug.print("Table: {any}\n", .{table});
-    const controller = Controller.open_remarkable2();
-    _ = controller;
+
+    var controller = try Controller.Controller.init();
+    try controller.start(allocator);
+    defer controller.stop();
+
+    const table = try Waveformer.giveMeWaveform(allocator);
+    defer Waveformer.destroyWaveform(allocator, table);
 }
