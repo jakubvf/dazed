@@ -140,8 +140,6 @@ const FixScreenInfo = packed struct {
 const log = std.log.scoped(.Controller);
 
 pub const Controller = struct {
-    dims: FramebufferDimensions,
-
     framebuffer_fd: std.fs.File,
     temp_sensor_fd: std.fs.File,
 
@@ -149,6 +147,8 @@ pub const Controller = struct {
     temperature: i32 = undefined,
 
     front_buffer_index: i8 = -1,
+
+    dims: FramebufferDimensions,
 
     power_state: bool = false,
 
@@ -159,7 +159,7 @@ pub const Controller = struct {
 
     blank_frame: []u8 = undefined,
 
-    back_buffer_index: usize = 0,
+    back_buffer_index: u8 = 0,
 
     pub fn init() !Controller {
         // "mxs-lcdif",
@@ -191,7 +191,8 @@ pub const Controller = struct {
         _ = try self.getTemperature();
 
         const FBIOGET_VSCREENINFO = 0x4600;
-        if (std.os.linux.ioctl(self.framebuffer_fd.handle, FBIOGET_VSCREENINFO, @intFromPtr(&self.fb_var_info)) == -1) {
+        const result = std.os.linux.ioctl(self.framebuffer_fd.handle, FBIOGET_VSCREENINFO, @intFromPtr(&self.fb_var_info));
+        if (result == -1) {
             log.err("ioctl FBIOGET_VSCREENINFO failed", .{});
             return error.ControllerInitFailed;
         }
@@ -208,14 +209,15 @@ pub const Controller = struct {
         // xres_virtual: 260 (expected: 0)
         // yres_virtual: 23936 (expected: 23936)
         // smem_len: 33554432 (expected: 24893440)
-        const temp = self.dims;
+        // const temp = self.dims;
 
+        const ioctl = @cImport(@cInclude("sys/ioctl.h")).ioctl;
         const FBIOGET_FSCREENINFO = 0x4602;
-        if (std.os.linux.ioctl(self.framebuffer_fd.handle, FBIOGET_FSCREENINFO, @intFromPtr(&self.fb_fix_info)) == -1) {
+        if (ioctl(self.framebuffer_fd.handle, FBIOGET_FSCREENINFO, @intFromPtr(&self.fb_fix_info)) == -1) {
             log.err("ioctl FBIOGET_FSCREENINFO failed", .{});
             return error.ControllerInitFailed;
         }
-        self.dims = temp;
+        // self.dims = temp;
 
         if (self.fb_var_info.xres != self.dims.width or self.fb_var_info.yres != self.dims.height or self.fb_var_info.xres_virtual != self.dims.width or self.fb_var_info.yres_virtual != self.dims.height * self.dims.frame_count or self.fb_fix_info.smem_len < self.dims.total_size) {
             log.err(
@@ -442,15 +444,24 @@ pub const Controller = struct {
         const FBIOPUT_VSCREENINFO = 0x4601;
         // Schedule next frame to be displayed and wait for vsync
         const FBIOPAN_DISPLAY = 0x4606;
-        const request = if (self.front_buffer_index == -1) FBIOPUT_VSCREENINFO else FBIOPAN_DISPLAY;
+        const request: u32 = if (self.front_buffer_index == -1) FBIOPUT_VSCREENINFO else FBIOPAN_DISPLAY;
 
-        if (std.os.linux.ioctl(self.framebuffer.handle, request, &self.fb_var_info) == -1) {
+        const result = std.os.linux.ioctl(self.framebuffer_fd.handle, request, @intFromPtr(&self.fb_var_info));
+        log.debug("page flip result: {}", .{result});
+
+        const c = @cImport(@cInclude("linux/fb.h"));
+        const fb_var_screeninfo = c.fb_var_screeninfo;
+        const orig: *fb_var_screeninfo = @ptrCast(&self.fb_var_info);
+        log.debug("Orig C fb var screeninfo\n{any}", .{orig.*});
+        log.debug("fb_var_info: {any}", .{self.fb_var_info});
+
+        if (result == -1) {
             log.err("ioctl FBIOPUT_VSCREENINFO failed", .{});
             return error.ControllerPageFlipFailed;
         }
 
-        self.front_buffer_index = self.back_buffer_index;
+        self.front_buffer_index = @intCast(self.back_buffer_index);
         // waved uses % 2 here, but let's try and % frame_count
-        self.back_buffer_index = (self.back_buffer_index + 1) % self.dims.frame_count;
+        self.back_buffer_index = (self.back_buffer_index + 1) % 2;
     }
 };
