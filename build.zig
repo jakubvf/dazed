@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     // means any target is allowed, and the default is native. Other options
     // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{
-        .default_target = std.zig.CrossTarget{
+        .default_target = std.Target.Query{
             .cpu_model = .baseline,
             .cpu_arch = .arm,
             .os_tag = .linux,

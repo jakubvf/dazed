@@ -79,9 +79,7 @@ pub fn update_display(generator: *Generator, buffer: []const u8, region: UpdateR
     log.debug("updating intensity buffer", .{});
     generator.updateIntensityBuffer(transformed_buffer, &transformed_region);
 
-    log.debug("looking up transition", .{});
     const transition = generator.waveform.lookup(0, try generator.controller.getTemperature()).?;
-    log.debug("transition idx 0: {any}", .{transition[0]});
 
     log.debug("begin frame generation", .{});
     try generator.generateAndSendFrames(transition, &transformed_region);

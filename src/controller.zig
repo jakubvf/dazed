@@ -76,68 +76,15 @@ pub const FramebufferDimensions = struct {
     }
 };
 
-const Bitfield = packed struct {
-    offset: u32,
-    length: u32,
-    msb_right: u32,
-};
-
-const VarScreenInfo = packed struct {
-    xres: u32,
-    yres: u32,
-    xres_virtual: u32,
-    yres_virtual: u32,
-    xoffset: u32,
-    yoffset: u32,
-
-    bits_per_pixel: u32,
-    grayscale: u32,
-
-    red: Bitfield,
-    green: Bitfield,
-    blue: Bitfield,
-    transp: Bitfield,
-
-    nonstd: u32,
-    activate: u32,
-    height: u32,
-    width: u32,
-    accel_flags: u32,
-
-    // Timing values in pixclocks, except pixclock
-    pixclock: u32,
-    left_margin: u32,
-    right_margin: u32,
-    upper_margin: u32,
-    lower_margin: u32,
-    hsync_len: u32,
-    vsync_len: u32,
-    sync: u32,
-    vmode: u32,
-    rotate: u32,
-    colorspace: u32,
-    reserved: u128,
-};
-
-const FixScreenInfo = packed struct {
-    id: u128,
-    smem_start: usize,
-    smem_len: u32,
-    type: u32,
-    type_aux: u32,
-    visual: u32,
-    xpanstep: u16,
-    ypanstep: u16,
-    ywrapstep: u16,
-    line_length: u32,
-    mmio_start: usize,
-    mmio_len: u32,
-    accel: u32,
-    capabilities: u16,
-    reserved: u32,
-};
-
 const log = std.log.scoped(.Controller);
+const c = @cImport({
+    @cInclude("stdio.h");
+    @cInclude("linux/fb.h");
+    @cInclude("string.h");
+    @cInclude("errno.h");
+});
+const fb_var_screeninfo = c.struct_fb_var_screeninfo;
+const fb_fix_screeninfo = c.struct_fb_fix_screeninfo;
 
 pub const Controller = struct {
     framebuffer_fd: std.fs.File,
@@ -152,8 +99,8 @@ pub const Controller = struct {
 
     power_state: bool = false,
 
-    fb_var_info: VarScreenInfo = undefined,
-    fb_fix_info: FixScreenInfo = undefined,
+    fb_var_info: fb_var_screeninfo = undefined,
+    fb_fix_info: fb_fix_screeninfo = undefined,
 
     framebuffer: ?[]u8 = null,
 
@@ -197,27 +144,11 @@ pub const Controller = struct {
             return error.ControllerInitFailed;
         }
 
-        // Zig has to be f*cking with me. The next ioctl call changes the value of self.dims.
-        // Or I am just stupid.
-        // debug(Controller): controller.FramebufferDimensions{ .width = 260, .depth = 4, .stride = 1040, .packed_pixels = 8, .height = 1408, .frame_size = 1464320, .frame_count = 17, .total_size = 24893440, .left_margin = 26, .right_margin = 0, .upper_margin = 3, .lower_margin = 1, .real_width = 1872, .real_height = 1404, .real_size = 2628288 }
-        //
-        // debug(Controller): controller.FramebufferDimensions{ .width = 0, .depth = 4, .stride = 1040, .packed_pixels = 8, .height = 1408, .frame_size = 1464320, .frame_count = 17, .total_size = 24893440, .left_margin = 26, .right_margin = 0, .upper_margin = 3, .lower_margin = 1, .real_width = 1872, .real_height = 1404, .real_size = 2628288 }
-        //
-        // error(Controller): Framebuffer dimensions do not match:
-        // xres: 260 (expected: 0)
-        // yres: 1408 (expected: 1408)
-        // xres_virtual: 260 (expected: 0)
-        // yres_virtual: 23936 (expected: 23936)
-        // smem_len: 33554432 (expected: 24893440)
-        // const temp = self.dims;
-
-        const ioctl = @cImport(@cInclude("sys/ioctl.h")).ioctl;
         const FBIOGET_FSCREENINFO = 0x4602;
-        if (ioctl(self.framebuffer_fd.handle, FBIOGET_FSCREENINFO, @intFromPtr(&self.fb_fix_info)) == -1) {
+        if (std.os.linux.ioctl(self.framebuffer_fd.handle, FBIOGET_FSCREENINFO, @intFromPtr(&self.fb_fix_info)) == -1) {
             log.err("ioctl FBIOGET_FSCREENINFO failed", .{});
             return error.ControllerInitFailed;
         }
-        // self.dims = temp;
 
         if (self.fb_var_info.xres != self.dims.width or self.fb_var_info.yres != self.dims.height or self.fb_var_info.xres_virtual != self.dims.width or self.fb_var_info.yres_virtual != self.dims.height * self.dims.frame_count or self.fb_fix_info.smem_len < self.dims.total_size) {
             log.err(
@@ -252,7 +183,7 @@ pub const Controller = struct {
             self.framebuffer_fd.handle,
             0,
         );
-        if (mmap_result == -1) {
+        if (mmap_result > std.math.maxInt(isize)) {
             log.err("Map framebuffer to memory failed", .{});
             return error.ControllerInitFailed;
         }
@@ -375,7 +306,10 @@ pub const Controller = struct {
 
         var frame_i: usize = 0;
         while (frame_i < self.dims.frame_count) : (frame_i += 1) {
-            @memcpy(self.framebuffer.?[frame_i * self.dims.frame_size .. frame_i * self.dims.frame_size + self.dims.frame_size], self.blank_frame);
+            const begin = frame_i * self.dims.frame_size;
+            const end = begin + self.dims.frame_size;
+            const dest = self.framebuffer.?[begin..end];
+            @memcpy(dest, self.blank_frame);
         }
     }
 
@@ -408,8 +342,8 @@ pub const Controller = struct {
 
     pub fn setPower(self: *Controller, value: bool) void {
         const FBIOBLANK = 0x4611;
-        const FBIOBLANK_OFF = 0;
-        const FBIOBLANK_ON = 4;
+        const FBIOBLANK_OFF = 4;
+        const FBIOBLANK_ON = 0;
 
         if (value != self.power_state) {
             if (std.os.linux.ioctl(self.framebuffer_fd.handle, FBIOBLANK, if (value) FBIOBLANK_ON else FBIOBLANK_OFF) == 0) {
@@ -447,21 +381,15 @@ pub const Controller = struct {
         const request: u32 = if (self.front_buffer_index == -1) FBIOPUT_VSCREENINFO else FBIOPAN_DISPLAY;
 
         const result = std.os.linux.ioctl(self.framebuffer_fd.handle, request, @intFromPtr(&self.fb_var_info));
-        log.debug("page flip result: {}", .{result});
 
-        const c = @cImport(@cInclude("linux/fb.h"));
-        const fb_var_screeninfo = c.fb_var_screeninfo;
-        const orig: *fb_var_screeninfo = @ptrCast(&self.fb_var_info);
-        log.debug("Orig C fb var screeninfo\n{any}", .{orig.*});
-        log.debug("fb_var_info: {any}", .{self.fb_var_info});
-
-        if (result == -1) {
-            log.err("ioctl FBIOPUT_VSCREENINFO failed", .{});
+        if (result > std.math.maxInt(isize)) {
+            const err: c_int = @intCast(-@as(i32, @bitCast(result)));
+            log.err("ioctl failed with errno {}: {s}", .{ err, c.strerror(err) });
             return error.ControllerPageFlipFailed;
         }
 
         self.front_buffer_index = @intCast(self.back_buffer_index);
         // waved uses % 2 here, but let's try and % frame_count
-        self.back_buffer_index = (self.back_buffer_index + 1) % 2;
+        self.back_buffer_index = (self.back_buffer_index + 1) % @as(u8, @intCast(self.dims.frame_count));
     }
 };
