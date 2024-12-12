@@ -368,11 +368,14 @@ pub const Controller = struct {
     }
 
     pub fn pageFlip(self: *Controller) !void {
+        log.debug("Flipping page", .{});
         if (self.framebuffer == null) {
             @panic("Controller is not initialized");
         }
 
         self.fb_var_info.yoffset = self.back_buffer_index * self.dims.height;
+        log.debug("fb_var_info.yoffset: {}", .{self.fb_var_info.yoffset});
+        log.debug("fb_var_info.activate: {}", .{self.fb_var_info.activate});
 
         // Schedule first frame
         const FBIOPUT_VSCREENINFO = 0x4601;
@@ -390,6 +393,6 @@ pub const Controller = struct {
 
         self.front_buffer_index = @intCast(self.back_buffer_index);
         // waved uses % 2 here, but let's try and % frame_count
-        self.back_buffer_index = (self.back_buffer_index + 1) % @as(u8, @intCast(self.dims.frame_count));
+        self.back_buffer_index = (self.back_buffer_index + 1) % 2;
     }
 };

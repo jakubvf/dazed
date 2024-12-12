@@ -17,7 +17,7 @@ pub fn main() !void {
 
     var generator = try Generator.init(allocator, &controller, table);
     defer generator.deinit();
-    try generator.update_display(&[_]u8 {30} ** (1404 * 1872), Generator.UpdateRegion{
+    try generator.update_display(&[_]u8 {31} ** (1404 * 1872), Generator.UpdateRegion{
         .top = 0,
         .left = 0,
         .width = 1404,

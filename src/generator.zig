@@ -54,14 +54,11 @@ pub fn update_display(generator: *Generator, buffer: []const u8, region: UpdateR
 
     const transformed_buffer = try generator.allocator.alloc(u8, buffer.len);
     var k: usize = 0;
-    while(k < buffer.len) : (k += 1) {
+    while (k < buffer.len) : (k += 1) {
         const i = region.height - (k % region.height) - 1;
         const j = region.width - (k / region.height) - 1;
 
         transformed_buffer[k] = buffer[i * region.width + j] & (intensity_values - 1);
-        if (transformed_buffer[k] & 1 == 1) {
-            transformed_buffer[k] -= 1;
-        }
     }
     log.debug("created transformed buffer", .{});
 
@@ -69,12 +66,17 @@ pub fn update_display(generator: *Generator, buffer: []const u8, region: UpdateR
     const left = dims.real_width - region.top - region.height;
     const width = region.height;
     const height = region.width;
-    const transformed_region = UpdateRegion{
+    var transformed_region = UpdateRegion{
         .top = top,
         .left = left,
         .height = height,
         .width = width,
     };
+
+    if (transformed_region.left >= dims.real_width or transformed_region.top >= dims.real_height or transformed_region.left + transformed_region.width > dims.real_width or transformed_region.top + transformed_region.height > dims.real_height) {
+        log.err("Region out of bounds", .{});
+        return error.GeneratorInvalidRegion;
+    }
 
     log.debug("updating intensity buffer", .{});
     generator.updateIntensityBuffer(transformed_buffer, &transformed_region);
@@ -85,8 +87,18 @@ pub fn update_display(generator: *Generator, buffer: []const u8, region: UpdateR
     try generator.generateAndSendFrames(transition, &transformed_region);
 }
 
-fn updateIntensityBuffer(generator: *Generator, buffer: []const u8, region: *const UpdateRegion) void {
+fn updateIntensityBuffer(generator: *Generator, buffer: []const u8, region: *UpdateRegion) void {
     const dims = &generator.controller.dims;
+
+    const mask = dims.packed_pixels - 1;
+    if ((region.width & mask) == 0 and (region.left & mask) == 0) {
+        log.debug("region is aligned", .{});
+    } else {
+        log.debug("aligning region", .{});
+        region.left = region.left & ~mask;
+        const pad_left = region.left & mask;
+        region.width = (pad_left + region.width + mask) & ~mask;
+    }
 
     var y: usize = 0;
     while (y < region.height) : (y += 1) {
@@ -104,20 +116,20 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
     const blank_frame = generator.controller.blank_frame;
 
     // Find the longest transition sequence in the waveform
-    const max_operations: usize = 135;
-    // for (waveform) |transition| {
-    //     max_operations = @max(max_operations, transition.operations.len);
-    // }
+    var max_operations: usize = 0;
+    for (waveform) |transition| {
+        max_operations = @max(max_operations, transition.operations.len);
+    }
 
     // Generate one frame for each step in the longest transition
     var operation_idx: usize = 0;
     while (operation_idx < max_operations) : (operation_idx += 1) {
         log.debug("duplicating frame {}", .{operation_idx});
         const frame = try generator.allocator.dupe(u8, blank_frame);
-        const data: [*]u16 = @alignCast(@ptrCast(
-            frame.ptr +
-                (dims.upper_margin + region.top) * dims.stride +
-                (dims.left_margin + region.left / dims.packed_pixels) * dims.depth
+        const data: [*]u16 = @alignCast(@ptrCast(frame.ptr +
+            (dims.upper_margin + region.top) * dims.stride +
+            dims.left_margin * dims.depth + // Remove division by packed_pixels here
+            (region.left / dims.packed_pixels) * dims.depth // Separate the packed pixels adjustment
         ));
 
         log.debug("drawing frame", .{});
@@ -139,15 +151,12 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
                     _ = target;
 
                     // Find the transition for these intensity values
-                    const transition = waveform[0]; //findTransition(waveform, current, target);
+                    // const transition = waveform[1]; //findTransition(waveform, current, target);
 
                     // Get the phase for the current operation step
                     // If we're past the end of this transition's operations,
                     // use Noop phase
-                    const phase = if (operation_idx < transition.operations.len)
-                        transition.operations[operation_idx]
-                    else
-                        .Noop;
+                    const phase = waveform[1].operations[operation_idx];
 
                     packed_phases |= @intFromEnum(phase);
                 }
@@ -159,13 +168,12 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
         }
 
         log.debug("copying new frame to backbuffer", .{});
-        @memcpy(frame, generator.controller.getBackBuffer());
-        log.debug("page flip", .{});
+        @memcpy(generator.controller.getBackBuffer(), frame);
         try generator.controller.pageFlip();
     }
 
     log.debug("copying intensities", .{});
-    @memcpy(generator.current_intensity, generator.next_intensity);
+    std.mem.swap([]u8, &generator.current_intensity, &generator.next_intensity);
 }
 
 fn findTransition(waveform: []const Transition, from: Intensity, to: Intensity) Transition {
