@@ -115,6 +115,12 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
     const dims = &generator.controller.dims;
     const blank_frame = generator.controller.blank_frame;
 
+    const start_offset = region.top * dims.real_width + region.left;
+    const mid_offset = dims.real_width - region.width;
+
+    const prev_base = generator.current_intensity.ptr + start_offset;
+    const next_base = generator.next_intensity.ptr + start_offset;
+
     // Find the longest transition sequence in the waveform
     var max_operations: usize = 0;
     for (waveform) |transition| {
@@ -126,45 +132,36 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
     while (operation_idx < max_operations) : (operation_idx += 1) {
         log.debug("duplicating frame {}", .{operation_idx});
         const frame = try generator.allocator.dupe(u8, blank_frame);
-        const data: [*]u16 = @alignCast(@ptrCast(frame.ptr +
+        var data: [*]u16 = @alignCast(@ptrCast(frame.ptr +
             (dims.upper_margin + region.top) * dims.stride +
-            dims.left_margin * dims.depth + // Remove division by packed_pixels here
-            (region.left / dims.packed_pixels) * dims.depth // Separate the packed pixels adjustment
-        ));
+            (dims.left_margin + region.left / dims.packed_pixels) * dims.depth));
+
+        var prev = prev_base;
+        var next = next_base;
 
         log.debug("drawing frame", .{});
-        var y: usize = 0;
-        while (y < region.height) : (y += 1) {
-            var x: usize = 0;
-            while (x < region.width) : (x += dims.packed_pixels) {
+        var y: usize = region.top;
+        while (y < region.top + region.height) : (y += 1) {
+            var sx: usize = region.left;
+            while (sx < region.left + region.width) : (sx += dims.packed_pixels) {
                 var packed_phases: u16 = 0;
 
-                var px: usize = 0;
-                while (px < dims.packed_pixels and (x + px) < region.width) : (px += 1) {
-                    const idx = (region.top + y) * dims.real_width + (region.left + x + px);
+                var x: usize = sx;
+                while (x < sx + dims.packed_pixels) : (x += 1) {
                     packed_phases <<= 2;
-
-                    // Get current and target intensities for this pixel
-                    const current = generator.current_intensity[idx];
-                    _ = current;
-                    const target = generator.next_intensity[idx];
-                    _ = target;
-
-                    // Find the transition for these intensity values
-                    // const transition = waveform[1]; //findTransition(waveform, current, target);
-
-                    // Get the phase for the current operation step
-                    // If we're past the end of this transition's operations,
-                    // use Noop phase
                     const phase = waveform[1].operations[operation_idx];
-
-                    packed_phases |= @intFromEnum(phase);
+                    packed_phases |= @as(u8, @intFromEnum(phase));
+                    prev += 1;
+                    next += 1;
                 }
 
-                // Write the packed phases for this group of pixels
-                const data_idx = y * (dims.stride / @sizeOf(u16)) + (x / dims.packed_pixels);
-                data[data_idx] = packed_phases;
+                data[0] = packed_phases;
+                data += 2;
             }
+
+            prev += mid_offset;
+            next += mid_offset;
+            data += (dims.stride - (region.width / dims.packed_pixels) * dims.depth) / @sizeOf(@TypeOf(data[0]));
         }
 
         log.debug("copying new frame to backbuffer", .{});
@@ -173,7 +170,7 @@ fn generateAndSendFrames(generator: *Generator, waveform: []const Transition, re
     }
 
     log.debug("copying intensities", .{});
-    std.mem.swap([]u8, &generator.current_intensity, &generator.next_intensity);
+    @memcpy(generator.current_intensity, generator.next_intensity);
 }
 
 fn findTransition(waveform: []const Transition, from: Intensity, to: Intensity) Transition {
