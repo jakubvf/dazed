@@ -4,11 +4,21 @@
 //
 
 const std = @import("std");
+const assert = std.debug.assert;
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var table = try Table.from_wbf(allocator, "./src/waveforms/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf");
+    defer Table.deinit(&table, allocator);
+}
 
 const Phase = enum(u8) {
     Noop = 0b00,
     Black = 0b01,
     White = 0b10,
+    Noop2 = 0b11,
 };
 
 /// Cell grayscale intensity (5 bits).
@@ -17,7 +27,7 @@ const Phase = enum(u8) {
 const intensity_values = 1 << 5;
 const PhaseMatrix = [intensity_values][intensity_values]Phase;
 const Waveform = std.ArrayList(PhaseMatrix);
-const Lookup = std.ArrayList(std.ArrayList(usize));
+const Lookup = [][]usize;
 
 fn barcode_symbol_to_int(symbol: u8) ?i16 {
     if (symbol >= '0' and symbol <= '9') {
@@ -62,13 +72,13 @@ pub fn discover_wbf_file(allocator: std.mem.Allocator) !?[]const u8 {
 
     var metadata = std.ArrayList([]const u8).init(aa);
     while (true) {
-        var length: u32 = try reader.readIntBig(u32);
+        const length: u32 = try reader.readIntBig(u32);
 
         if (length == 0) {
             break;
         }
 
-        var buffer = try aa.alloc(u8, length);
+        const buffer = try aa.alloc(u8, length);
         const length_read = try reader.read(buffer);
         std.debug.assert(length == length_read);
         try metadata.append(buffer);
@@ -177,72 +187,72 @@ const WbfHeader = packed struct {
 
         std.debug.assert(header_bytes.len == @sizeOf(WbfHeader));
 
-        var header = @as(*WbfHeader, @alignCast(@ptrCast(header_bytes.ptr)));
+        const header = @as(*WbfHeader, @alignCast(@ptrCast(header_bytes.ptr)));
         // NOTE: The original waved library converts WbfHeader fields to little-endian.
         // On Remarkable2, this doesn't actually need to happen.
 
         const checksum1 = basic_checksum(header_bytes[8..31]);
         if (header.checksum1 != checksum1) {
-            std.debug.print("Corrupted WBF header: expected checksum1 {d}, actual {d}\n", .{ header.checksum1, checksum1 });
+            std.log.err("Corrupted WBF header: expected checksum1 {d}, actual {d}\n", .{ header.checksum1, checksum1 });
             return error.InvalidWbfHeader;
         }
 
         const checksum2 = basic_checksum(header_bytes[32..47]);
         if (header.checksum2 != checksum2) {
-            std.debug.print("Corrupted WBF header: expected checksum2 {d}, actual {d}\n", .{ header.checksum2, checksum2 });
+            std.log.err("Corrupted WBF header: expected checksum2 {d}, actual {d}\n", .{ header.checksum2, checksum2 });
             return error.InvalidWbfHeader;
         }
 
         if (header.run_type != expected_run_type) {
-            std.debug.print("Invalid run type in WBF header: expected {d}, actual {d}", .{ expected_run_type, header.run_type });
+            std.log.err("Invalid run type in WBF header: expected {d}, actual {d}", .{ expected_run_type, header.run_type });
             return error.InvalidWbfHeader;
         }
 
         if (header.fpl_platform != expected_fpl_platform) {
             const message = "Invalid FPL platform in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_fpl_platform, header.fpl_platform });
+            std.log.err(message, .{ expected_fpl_platform, header.fpl_platform });
             return error.InvalidWbfHeader;
         }
 
         if (header.adhesive_run != expected_adhesive_run) {
             const message = "Invalid adhesive run in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_adhesive_run, header.adhesive_run });
+            std.log.err(message, .{ expected_adhesive_run, header.adhesive_run });
             return error.InvalidWbfHeader;
         }
 
         if (header.waveform_type != expected_waveform_type) {
             const message = "Invalid waveform type in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_waveform_type, header.waveform_type });
+            std.log.err(message, .{ expected_waveform_type, header.waveform_type });
             return error.InvalidWbfHeader;
         }
 
         if (header.waveform_revision != expected_waveform_revision) {
             const message = "Invalid waveform revision in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_waveform_revision, header.waveform_revision });
+            std.log.err(message, .{ expected_waveform_revision, header.waveform_revision });
             return error.InvalidWbfHeader;
         }
 
         if (header.vcom_offset != expected_vcom_offset) {
             const message = "Invalid VCOM offset in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_vcom_offset, header.vcom_offset });
+            std.log.err(message, .{ expected_vcom_offset, header.vcom_offset });
             return error.InvalidWbfHeader;
         }
 
         if (header.fvsn != expected_fvsn) {
             const message = "Invalid FVSN in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_fvsn, header.fvsn });
+            std.log.err(message, .{ expected_fvsn, header.fvsn });
             return error.InvalidWbfHeader;
         }
 
         if (header.luts != expected_luts) {
             const message = "Invalid LUTS in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_luts, header.luts });
+            std.log.err(message, .{ expected_luts, header.luts });
             return error.InvalidWbfHeader;
         }
 
         if (header.advanced_wfm_flags != expected_advanced_wfm_flags) {
             const message = "Invalid advanced WFM flags revision in WBF header: expected {d}, actual {d}";
-            std.debug.print(message, .{ expected_advanced_wfm_flags, header.advanced_wfm_flags });
+            std.log.err(message, .{ expected_advanced_wfm_flags, header.advanced_wfm_flags });
             return error.InvalidWbfHeader;
         }
 
@@ -283,14 +293,14 @@ const ModeKind = enum {
 
 pub const ModeID = u8;
 
-pub const Table = struct {// Display frame rate
+pub const Table = struct { // Display frame rate
     frame_rate: u8,
     // Number of available modes
     mode_count: ModeID,
     // Mappings of mode IDs to mode kinds and reverse mapping
     mode_kind_by_id: std.ArrayList(ModeKind),
     // Set of temperature thresholds
-    // The last value is the maximal operating temperature
+    // The last value is the max operating temperature
     temperatures: []Temperature,
     // All available waveforms. This table may be smaller than
     // `(temperatures.size() - 1) * mode_count` since some modes/temperatures
@@ -308,8 +318,8 @@ pub const Table = struct {// Display frame rate
     }
 
     // pub fn init(allocator: std.mem.Allocator) Table {}
-    pub fn deinit(table: *Table) void {
-        _ = table;
+    pub fn deinit(table: *Table, allocator: std.mem.Allocator) void {
+        allocator.free(table.temperatures);
     }
 
     // Reads waveform table definitions from a WBF file and returns a parsed waveform table.
@@ -319,6 +329,8 @@ pub const Table = struct {// Display frame rate
             .mode_count = 0,
             .mode_kind_by_id = std.ArrayList(ModeKind).init(allocator),
             .temperatures = undefined,
+            .waveforms = undefined,
+            .waveform_lookup = undefined,
         };
 
         var file = try std.fs.cwd().openFile(path, .{});
@@ -337,7 +349,7 @@ pub const Table = struct {// Display frame rate
 
         // Check expected size
         if (header.filesize != file_contents.len) {
-            std.debug.print("Invalid filesize in WBF header: specified {} bytes, actual {} bytes\n", .{ header.filesize, file_contents.len });
+            std.log.err("Invalid filesize in WBF header: specified {} bytes, actual {} bytes\n", .{ header.filesize, file_contents.len });
             return error.InvalidWbfHeader;
         }
 
@@ -348,76 +360,121 @@ pub const Table = struct {// Display frame rate
         crc_verif = crc32_checksum(crc_verif, file_contents[4..]);
 
         if (header.checksum != crc_verif) {
-            std.debug.print("Corrupted WBF file: expected CRC32 0x{X}, actual 0x{X}\n", .{ header.checksum, crc_verif });
-            return error.InvalidWbfHeader;
+            std.log.err("Corrupted WBF file: expected CRC32 0x{X}, actual 0x{X}\n", .{ header.checksum, crc_verif });
+            return error.ReadingWbfFile;
         }
 
         // Parse temperature table
-        const temperature_count = header.temp_range_count + 2; // + 2 cause IDK why
-        result.temperatures = try parse_temperatures(
-            allocator,
-            file_contents[file_offset..][temperature_count + 1], // +1 to include checksum
-        );
+        result.temperatures = tb: {
+            // header.temp_range_count doesn't account for lower bound and upper bound
+            const temperature_count = header.temp_range_count + 2;
+            std.debug.print("temperature_count: {}\n", .{temperature_count});
 
-        file_offset += temperature_count;
-        file_offset += 1; // don't forget the checksum!
+            const temps = try allocator.dupe(Temperature, file_contents[file_offset .. file_offset + temperature_count]);
+            const checksum = basic_checksum(file_contents[file_offset .. file_offset + temperature_count]);
+            const checksum_expected = file_contents[file_offset + temperature_count];
+            if (checksum != checksum_expected) {
+                std.log.err("Corrupted WBF temperatures: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
+                return error.ReadingWbfFile;
+            }
+
+            std.debug.print("temperatures: ", .{});
+            for (temps) |t| {
+                std.debug.print("{} ", .{t});
+            }
+            std.debug.print("\n", .{});
+
+            file_offset += temperature_count;
+            file_offset += 1; // don't forget the checksum!
+
+            break :tb temps;
+        };
 
         // Skip extra information (contains a string equal to the file name)
-        const file_name_string_len = file_contents[file_offset];
-        file_offset += file_name_string_len + 2;
+        {
+            const file_name_string_len = file_contents[file_offset];
+            file_offset += 1; // string len
+            std.debug.print("file name: {s}\n", .{file_contents[file_offset .. file_offset + file_name_string_len]});
+
+            const checksum = basic_checksum(file_contents[file_offset - 1 .. file_offset - 1 + file_name_string_len + 1]);
+            const checksum_expected = file_contents[file_offset - 1 + file_name_string_len + 1];
+            if (checksum != checksum_expected) {
+                std.log.err("Corrupted file name string: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
+                return error.ReadingWbfFile;
+            }
+            file_offset += file_name_string_len + 1; // checksum
+        }
 
         // Parse waveforms
-        var blocks = find_waveform_blocks(allocator, header, file_contents, file_contents[file_offset..]);
-        blocks.append(blocks.items.len);
+        std.debug.print("file_offset: {}\n", .{file_offset});
+        const blocks = try find_waveform_blocks(allocator, &header, file_contents, file_contents[file_offset..]);
+        defer allocator.free(blocks);
+        std.debug.print("blocks.len == {}\n", .{blocks.len});
 
-        const waveforms_and_lookup = parseWaveforms(allocator, header, blocks, file_contents, file_contents[file_offset..]);
+        result.waveforms, result.waveform_lookup = try parseWaveforms(allocator, &header, blocks, file_contents, file_contents[file_offset..]);
+        std.debug.print("waveforms.len == {}\n", .{result.waveforms.len});
+
 
         return result;
     }
 
-    const WaveformsAndLookup = struct {
-        waveforms: []Waveform,
-        lookup: Lookup,
-    };
-
-    fn parseWaveforms(allocator: std.mem.Allocator, header: *const WbfHeader, blocks: []const u32, file: []const u8, table: []const u8) !WaveformsAndLookup {
+    fn parseWaveforms(
+        allocator: std.mem.Allocator,
+        header: *const WbfHeader,
+        blocks: []const u32,
+        file: []const u8,
+        table: []const u8,
+    ) !struct { []Waveform, Lookup } {
         var waveforms = std.ArrayList(Waveform).init(allocator);
 
         var block_iterator: usize = 0;
         while (block_iterator + 1 != blocks.len) : (block_iterator += 1) {
-            waveforms.append(parseWaveformBlock(
+            try waveforms.append(try parseWaveformBlock(
                 allocator,
-                file[blocks[block_iterator]],
-                file[blocks[block_iterator + 1]],
+                file[blocks[block_iterator]..blocks[block_iterator + 1]],
             ));
         }
 
         const mode_count = header.mode_count + 1;
         const temp_count = header.temp_range_count + 1;
-        var waveform_lookup = try Lookup.initCapacity(allocator, mode_count);
+        var waveform_lookup = try allocator.alloc([]usize, mode_count);
 
+        var table_offset: usize = 0;
         var mode: usize = 0;
-        while(mode < mode_count) : (mode += 1) {
-            const mode_begin = file[try parsePointer(table)];
+        while (mode < mode_count) : (mode += 1) {
+            var mode_ptr = @as(usize, @intCast(try parsePointer(table[table_offset .. table_offset + 4])));
+            table_offset += 4; // parsePointer doesn't move forward the offset
+
+
             var temp_lookup = try std.ArrayList(usize).initCapacity(allocator, temp_count);
+            defer temp_lookup.deinit();
 
-            var temp: usize = 0;
-            while(temp < temp_count) : (temp+=1) {
-                const waveform_begin = try parsePointer(mode_begin);
-                std.sort.lowerBound(u32, key: anytype, items: []const T, context: anytype, comptime lessThan: fn(context:@TypeOf(context), lhs:@TypeOf(key), rhs:T)bool)
-                const LowerBound = struct {
-                    fn run() {
+            var temperature: usize = 0;
+            while (temperature < temp_count) : (temperature += 1) {
+                const waveform_begin = try parsePointer(file[mode_ptr .. mode_ptr + 4]);
+                mode_ptr += 4;
 
+                // This is going to require updating on 0.14.0... here ya go
+                // https://ziglang.org/documentation/master/std/#std.sort.lowerBound
+                const S = struct {
+                    fn lower_u32(context: void, lhs: u32, rhs: u32) bool {
+                        _ = context;
+                        return lhs < rhs;
                     }
                 };
-
+                const lowerBound_index = std.sort.lowerBound(u32, waveform_begin, blocks, {}, S.lower_u32);
+                try temp_lookup.append(lowerBound_index);
             }
+
+            waveform_lookup[mode] = try temp_lookup.toOwnedSlice();
         }
+
+        return .{ try waveforms.toOwnedSlice(), waveform_lookup };
     }
 
     /// Parse a waveform block in a WBF file.
     fn parseWaveformBlock(allocator: std.mem.Allocator, block: []const u8) !Waveform {
-        var matrix = PhaseMatrix{};
+        var matrix: PhaseMatrix = undefined;
         var result = Waveform.init(allocator);
 
         var begin: usize = 0;
@@ -425,7 +482,7 @@ pub const Table = struct {// Display frame rate
 
         var i: u8 = 0;
         var j: u8 = 0;
-        var repeat_mode = false;
+        var repeat_mode = true;
 
         while (begin != end) {
             const byte = block[begin];
@@ -436,30 +493,31 @@ pub const Table = struct {// Display frame rate
                 continue;
             }
 
-            const p4 = Phase{byte & 3};
-            const p3 = Phase{(byte >> 2) & 3};
-            const p2 = Phase{(byte >> 4) & 3};
-            const p1 = Phase{byte >> 6};
+            const p4: Phase = @enumFromInt(byte & 3);
+            const p3: Phase = @enumFromInt((byte >> 2) & 3);
+            const p2: Phase = @enumFromInt((byte >> 4) & 3);
+            const p1: Phase = @enumFromInt(byte >> 6);
 
             var repeat: usize = 1;
 
             if (repeat_mode and begin != end) {
                 // In repeat_mode, each byte is followed by a repetition number;
                 // otherwise, this number is assumed to be 1
-                repeat = block[begin] + 1;
+                repeat = @addWithOverflow(block[begin], 1)[0];
                 begin += 1;
 
-                if (byte == 0xff) {
+                if (byte == 0xFF) {
                     break;
                 }
             }
 
             var n: usize = 0;
             while (n < repeat) : (n += 1) {
-                matrix[j][i] = p1;
+                matrix[j + 0][i] = p1;
                 matrix[j + 1][i] = p2;
                 matrix[j + 2][i] = p3;
                 matrix[j + 3][i] = p4;
+                j += 4;
 
                 if (j == intensity_values) {
                     j = 0;
@@ -476,65 +534,60 @@ pub const Table = struct {// Display frame rate
         return result;
     }
 
-    fn parse_temperatures(allocator: std.mem.Allocator, temperatures_and_checksum: []const u8) ![]Temperature {
-        var temperatures = try allocator.alloc(Temperature, temperatures_and_checksum.len);
-        for (temperatures_and_checksum, 0..) |value, i| {
-            temperatures[i] = @as(i8, @bitCast(value));
-        }
-
-        const checksum = basic_checksum(temperatures_and_checksum[0 .. temperatures_and_checksum.len - 1]);
-        const checksum_expected = temperatures_and_checksum[temperatures_and_checksum.len - 1];
-
-        if (checksum != checksum_expected) {
-            std.debug.print("Corrupted WBF temperatures: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
-            return error.CorruptedWBFTemperatures;
-        }
-
-        return temperatures;
-    }
-
     // Computes the ordered list of waveform block addresses in a WBF file.
-    fn find_waveform_blocks(allocator: std.mem.Allocator, header: *const WbfHeader, file: []const u8, table: []const u8) std.ArrayList(u32) {
-        var result = std.AutoArrayHashMap(u32, void).init(allocator);
+    fn find_waveform_blocks(allocator: std.mem.Allocator, header: *const WbfHeader, file: []const u8, table: []const u8) ![]u32 {
+        // waved uses std::set... Zig doesn't have that so we use a Hash Map with void for value
+        var hash_map = std.AutoArrayHashMap(u32, void).init(allocator);
+        defer hash_map.deinit();
 
         const mode_count = header.mode_count + 1;
         const temp_count = header.temp_range_count + 1;
 
-        // I haven't done any testing yet.. but
-        // TODO: is this working as expected?
+        var table_offset: usize = 0;
+
         var mode_index: usize = 0;
         while (mode_index < mode_count) : (mode_index += 1) {
-            const mode = file[@as(usize, @intCast(try parsePointer(table)))];
+            var mode_ptr = @as(usize, @intCast(try parsePointer(table[table_offset .. table_offset + 4])));
+            table_offset += 4; // parsePointer doesn't move forward the offset
 
             var temperature: usize = 0;
             while (temperature < temp_count) : (temperature += 1) {
-                try result.put(try parsePointer(mode));
+                const mode = file[mode_ptr .. mode_ptr + 4];
+                const ptr = try parsePointer(mode);
+                mode_ptr += 4;
+                try hash_map.put(ptr, void{});
             }
         }
 
-        // TODO: Does result leak?
-        return std.ArrayList(u32).fromOwnedSlice(result.values());
+        // dance for including the length on the end
+        var result = try std.ArrayList(u32).initCapacity(allocator, hash_map.keys().len + 1);
+        try result.appendSlice(hash_map.keys());
+        std.mem.sort(u32, result.items, {}, comptime std.sort.asc(u32));
+        try result.append(@truncate(file.len));
+
+        return result.toOwnedSlice();
     }
 
     // Read a pointer field to a WBF file section.
-    fn parsePointer(ptr: [4]u8) !u32 {
-        const byte1 = ptr[0];
-        const byte2 = ptr[1];
-        const byte3 = ptr[2];
+    fn parsePointer(ptr: []const u8) !u32 {
+        assert(ptr.len == 4);
+        const byte1: u8 = ptr[0];
+        const byte2: u8 = ptr[1];
+        const byte3: u8 = ptr[2];
         const checksum_expected = ptr[3];
-        const checksum = byte1 + byte2 + byte3;
+        const checksum = @addWithOverflow(byte1, @addWithOverflow(byte2, byte3)[0])[0];
 
         if (checksum != checksum_expected) {
-            std.debug.print("Corrupted WBF pointer: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
+            std.log.err("Corrupted WBF pointer: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
             return error.CorruptedWBFPointer;
         }
 
-        const result = @as(u32, @intCast(byte1 | (byte2 << 8) | (byte3 << 16)));
+        const result = @as(u32, @intCast(byte1 | @as(u32, byte2) << 8 | @as(u32, byte3) << 16));
         return result;
     }
 };
 
-const Temperature = i8;
+const Temperature = u8;
 
 pub fn crc32_checksum(initial: u32, data: []const u8) u32 {
     var crc: u32 = initial ^ 0xFFFFFFFF;
