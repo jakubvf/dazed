@@ -12,6 +12,15 @@ pub fn main() !void {
 
     var table = try Table.from_wbf(allocator, "./src/waveforms/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf");
     defer Table.deinit(&table, allocator);
+
+    const waveform = try table.lookup(0, 20);
+    std.debug.print("Init phases ({}): ", .{waveform.items.len});
+    var step: usize = 0;
+    while (step < waveform.items.len) : (step += 1) {
+        const phase = waveform.items[step][0][30];
+        std.debug.print("{any} ", .{phase});
+    }
+    std.debug.print("\n",.{});
 }
 
 const Phase = enum(u8) {
@@ -317,6 +326,35 @@ pub const Table = struct { // Display frame rate
         _ = table;
     }
 
+    pub fn lookup(self: *const Table, mode: ModeID, temperature: Temperature) !*const Waveform {
+        if (mode < 0 or mode >= self.mode_count) {
+            std.log.err("Mode ID {} not supported, available modes are 0-{}", .{mode, self.mode_count - 1});
+            return error.WaveformLookup;
+        }
+
+        if (temperature < self.temperatures[0]) {
+            std.log.err("Temperature {} too low!", .{temperature});
+            return error.WaveformLookup;
+        }
+
+        if (temperature > self.temperatures[self.temperatures.len - 1]) {
+            std.log.err("Temperature {} too high!", .{temperature});
+            return error.WaveformLookup;
+        }
+
+        var index: usize = 0;
+        // -1 => the last temperature is the upper bound
+        while (index < self.temperatures.len - 1) : (index += 1) {
+            if (temperature < self.temperatures[index]) {
+                std.debug.print("lookup index: {}\n", .{index - 1});
+                return &self.waveforms[self.waveform_lookup[mode][index - 1]];
+            }
+        }
+
+            return error.WaveformLookup;
+
+    }
+
     // pub fn init(allocator: std.mem.Allocator) Table {}
     pub fn deinit(table: *Table, allocator: std.mem.Allocator) void {
         allocator.free(table.temperatures);
@@ -429,6 +467,7 @@ pub const Table = struct { // Display frame rate
 
         var block_iterator: usize = 0;
         while (block_iterator + 1 != blocks.len) : (block_iterator += 1) {
+            std.debug.print("block_iterator: {}\n", .{block_iterator});
             try waveforms.append(try parseWaveformBlock(
                 allocator,
                 file[blocks[block_iterator]..blocks[block_iterator + 1]],
@@ -503,7 +542,7 @@ pub const Table = struct { // Display frame rate
             if (repeat_mode and begin != end) {
                 // In repeat_mode, each byte is followed by a repetition number;
                 // otherwise, this number is assumed to be 1
-                repeat = @addWithOverflow(block[begin], 1)[0];
+                repeat = @as(usize, block[begin]) + 1;
                 begin += 1;
 
                 if (byte == 0xFF) {
