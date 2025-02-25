@@ -6,24 +6,24 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+// pub fn main() !void {
+//     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+//     const allocator = gpa.allocator();
 
-    var table = try Table.from_wbf(allocator, "./src/waveforms/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf");
-    defer Table.deinit(&table, allocator);
+//     var table = try Table.from_wbf(allocator, "./src/waveforms/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf");
+//     defer Table.deinit(&table, allocator);
 
-    const waveform = try table.lookup(0, 20);
-    std.debug.print("Init phases ({}): ", .{waveform.items.len});
-    var step: usize = 0;
-    while (step < waveform.items.len) : (step += 1) {
-        const phase = waveform.items[step][0][30];
-        std.debug.print("{any} ", .{phase});
-    }
-    std.debug.print("\n",.{});
-}
+//     const waveform = try table.lookup(0, 20);
+//     std.debug.print("Init phases ({}): ", .{waveform.items.len});
+//     var step: usize = 0;
+//     while (step < waveform.items.len) : (step += 1) {
+//         const phase = waveform.items[step][0][30];
+//         std.debug.print("{any} ", .{phase});
+//     }
+//     std.debug.print("\n",.{});
+// }
 
-const Phase = enum(u8) {
+pub const Phase = enum(u8) {
     Noop = 0b00,
     Black = 0b01,
     White = 0b10,
@@ -346,7 +346,6 @@ pub const Table = struct { // Display frame rate
         // -1 => the last temperature is the upper bound
         while (index < self.temperatures.len - 1) : (index += 1) {
             if (temperature < self.temperatures[index]) {
-                std.debug.print("lookup index: {}\n", .{index - 1});
                 return &self.waveforms[self.waveform_lookup[mode][index - 1]];
             }
         }
@@ -406,7 +405,6 @@ pub const Table = struct { // Display frame rate
         result.temperatures = tb: {
             // header.temp_range_count doesn't account for lower bound and upper bound
             const temperature_count = header.temp_range_count + 2;
-            std.debug.print("temperature_count: {}\n", .{temperature_count});
 
             const temps = try allocator.dupe(Temperature, file_contents[file_offset .. file_offset + temperature_count]);
             const checksum = basic_checksum(file_contents[file_offset .. file_offset + temperature_count]);
@@ -415,12 +413,6 @@ pub const Table = struct { // Display frame rate
                 std.log.err("Corrupted WBF temperatures: expected checksum 0x{X}, actual 0x{X}\n", .{ checksum_expected, checksum });
                 return error.ReadingWbfFile;
             }
-
-            std.debug.print("temperatures: ", .{});
-            for (temps) |t| {
-                std.debug.print("{} ", .{t});
-            }
-            std.debug.print("\n", .{});
 
             file_offset += temperature_count;
             file_offset += 1; // don't forget the checksum!
@@ -432,7 +424,6 @@ pub const Table = struct { // Display frame rate
         {
             const file_name_string_len = file_contents[file_offset];
             file_offset += 1; // string len
-            std.debug.print("file name: {s}\n", .{file_contents[file_offset .. file_offset + file_name_string_len]});
 
             const checksum = basic_checksum(file_contents[file_offset - 1 .. file_offset - 1 + file_name_string_len + 1]);
             const checksum_expected = file_contents[file_offset - 1 + file_name_string_len + 1];
@@ -444,13 +435,10 @@ pub const Table = struct { // Display frame rate
         }
 
         // Parse waveforms
-        std.debug.print("file_offset: {}\n", .{file_offset});
         const blocks = try find_waveform_blocks(allocator, &header, file_contents, file_contents[file_offset..]);
         defer allocator.free(blocks);
-        std.debug.print("blocks.len == {}\n", .{blocks.len});
 
         result.waveforms, result.waveform_lookup = try parseWaveforms(allocator, &header, blocks, file_contents, file_contents[file_offset..]);
-        std.debug.print("waveforms.len == {}\n", .{result.waveforms.len});
 
 
         return result;
@@ -467,7 +455,6 @@ pub const Table = struct { // Display frame rate
 
         var block_iterator: usize = 0;
         while (block_iterator + 1 != blocks.len) : (block_iterator += 1) {
-            std.debug.print("block_iterator: {}\n", .{block_iterator});
             try waveforms.append(try parseWaveformBlock(
                 allocator,
                 file[blocks[block_iterator]..blocks[block_iterator + 1]],
