@@ -20,4 +20,27 @@ pub fn main() !void {
         .table = &table,
     };
     try display.sendInit();
+
+    try display.sendRect(.{
+        .x = 100,
+        .y = 500,
+        .width = 500,
+        .height = 200,
+    });
+
+    try display.sendRect(.{
+        .x = 100,
+        .y = 100,
+        .width = 400,
+        .height = 100,
+    });
+
+    try display.sendRect(.{
+        .x = 1000,
+        .y = 1000,
+        .width = 100,
+        .height = 100,
+    });
+
+
 }

@@ -35,7 +35,7 @@ pub const Phase = enum(u8) {
 // TODO: Make Intensity a u5
 const intensity_values = 1 << 5;
 const PhaseMatrix = [intensity_values][intensity_values]Phase;
-const Waveform = std.ArrayList(PhaseMatrix);
+pub const Waveform = std.ArrayList(PhaseMatrix);
 const Lookup = [][]usize;
 
 fn barcode_symbol_to_int(symbol: u8) ?i16 {
