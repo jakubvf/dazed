@@ -1,12 +1,14 @@
 const std = @import("std");
 const Waveform = @import("waveform.zig");
 const Controller = @import("controller.zig");
+const ft = @import("freetype");
 
 const Self = @This();
 
 allocator: std.mem.Allocator,
 controller: *Controller.Controller,
 table: *Waveform.Table,
+ft_lib: *ft.Library,
 
 pub fn sendInit(self: *Self) !void {
     const waveform = try self.table.lookup(0, @intCast(try self.controller.getTemperature()));
@@ -75,7 +77,7 @@ fn printWaveform(waveform: *const Waveform.Waveform) void {
     while (from < 32) : (from += 1) {
         var to: usize = 0;
         while (to < 32) : (to += 1) {
-            std.debug.print("{},{},", .{from, to});
+            std.debug.print("{},{},", .{ from, to });
             var i: usize = 0;
             while (i < waveform.items.len) : (i += 1) {
                 std.debug.print("{},", .{waveform.items[i][from][to]});
@@ -159,4 +161,117 @@ fn fillRectWithOp(frame: []u8, dims: *const Controller.FramebufferDimensions, ph
 
         data += (dims.stride - (@as(u32, @intCast(rect.width)) / dims.packed_pixels) * dims.depth) / @sizeOf(u16);
     }
+}
+
+pub fn sendPixel(self: *Self, x: usize, y: usize) !void {
+    const dims = self.controller.dims;
+
+    const a2 = 6;
+    const waveform = try self.table.lookup(a2, @intCast(try self.controller.getTemperature()));
+
+    const frame_size = self.controller.blank_frame.len;
+    const black_frame = try self.allocator.alloc(u8, frame_size);
+    defer self.allocator.free(black_frame);
+    @memcpy(black_frame, self.controller.blank_frame);
+
+    // Calculate byte position in the framebuffer
+    const byte_pos = (dims.upper_margin + @as(u32, @intCast(y))) * dims.stride +
+        (dims.left_margin + @as(u32, @intCast(x)) / dims.packed_pixels) * dims.depth;
+
+    // Get pointer to the 16-bit word containing our pixel
+    const pixel_word: *u8 = &black_frame[byte_pos];
+
+    // Calculate which bits in the word represent our pixel
+    const pixel_pos_in_word = x % dims.packed_pixels;
+    const shift_amount: u3 = @intCast((dims.packed_pixels - 1 - pixel_pos_in_word) * 2);
+
+    // Set the new pixel value
+    pixel_word.* |= @as(u8, @intFromEnum(Waveform.Phase.Black)) << shift_amount;
+
+    for (waveform.items) |matrix| {
+        const op = matrix[30][0];
+
+        const frame = switch (op) {
+            .Noop => self.controller.blank_frame,
+            .Black => black_frame,
+            else => unreachable,
+        };
+
+        @memcpy(self.controller.getBackBuffer(), frame);
+
+        try self.controller.pageFlip();
+    }
+}
+
+pub fn sendText(self: *Self, x: u32, y: u32, text: []const u8) !void {
+    const a2 = 6;
+    const waveform = try self.table.lookup(a2, @intCast(try self.controller.getTemperature()));
+
+    const dims = self.controller.dims;
+    const frame_size = self.controller.blank_frame.len;
+
+    const black_frame = try self.allocator.alloc(u8, frame_size);
+    defer self.allocator.free(black_frame);
+    @memcpy(black_frame, self.controller.blank_frame);
+    fillFrameWithText(black_frame, &dims, .Black, self.ft_lib, x, y, text);
+
+    const white_frame = try self.allocator.alloc(u8, frame_size);
+    defer self.allocator.free(white_frame);
+    @memcpy(white_frame, self.controller.blank_frame);
+    fillFrameWithText(white_frame, &dims, .White, self.ft_lib, x, y, text);
+
+    for (waveform.items) |matrix| {
+        const op = matrix[30][0];
+
+        const frame = switch (op) {
+            .Noop => self.controller.blank_frame,
+            .Black => black_frame,
+            .White => white_frame,
+            else => unreachable,
+        };
+
+        @memcpy(self.controller.getBackBuffer(), frame);
+
+        try self.controller.pageFlip();
+    }
+}
+
+fn fillFrameWithText(frame: []u8, dims: *const Controller.FramebufferDimensions, phase: Waveform.Phase, face: ft.Face, x: u32, y: u32, text: []const u8) !void {
+    _ = phase;
+
+    for (text) |char| {
+        const idx = face.getCharIndex(char).?;
+        try face.loadGlyph(idx, .{ .no_hinting = true });
+        try face.renderGlyph(.normal);
+
+        const bitmap = &face.handle.*.glyph.*.bitmap;
+        const metrics = &face.handle.*.glyph.*.metrics;
+        const glyph_height: u32 = @intCast(bitmap.rows);
+
+        const x_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingX)), 64);
+        const y_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingY)), 64);
+
+        const draw_x: i32 = @as(i32, @intCast(x)) + x_offset;
+        const draw_y: i32 = @as(i32, @intCast(y)) - y_offset;
+        drawChar(frame, dims, bitmap, draw_x, draw_y);
+
+        x += @intCast(metrics.horiAdvance >> 6);
+        if (x >= dims.real_width) {
+            x = dims.left_margin;
+            y += glyph_height;
+        }
+    }
+}
+
+fn drawChar(frame: []u8, dims: *const Controller.FramebufferDimensions, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32) void {
+    const width: i32 = @intCast(bitmap.width);
+    const height: i32 = @intCast(bitmap.rows);
+    const bitmap_buffer = @as([*]u8, @ptrCast(bitmap.buffer));
+    _ = width;
+    _ = height;
+    _ = bitmap_buffer;
+    _ = frame;
+    _ = dims;
+    _ = x_offset;
+    _ = y_offset;
 }

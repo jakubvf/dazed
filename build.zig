@@ -21,6 +21,13 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibC();
 
+    const freetype = b.dependency("freetype", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.linkLibrary(freetype.artifact("freetype"));
+    exe.root_module.addImport("freetype", freetype.module("freetype"));
+
     b.installArtifact(exe);
 
     const main_tests = b.addTest(.{

@@ -5,6 +5,7 @@ const Waveform = @import("waveform.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // TODO: Enable this once I fix all memory leaks :D
     // defer gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -18,6 +19,7 @@ pub fn main() !void {
         .allocator = allocator,
         .controller = &controller,
         .table = &table,
+        .ft_lib = undefined,
     };
     try display.sendInit();
 
@@ -43,4 +45,9 @@ pub fn main() !void {
     });
 
 
+    try display.sendPixel(998, 1000);
+    try display.sendPixel(997, 1000);
+    try display.sendPixel(996, 1000);
+
+    // try display.sendText(100, 600, "Hello world!");
 }

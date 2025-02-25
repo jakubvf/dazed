@@ -1,0 +1,15 @@
+.{
+    .name = "dazed",
+
+    .version = "0.0.1",
+
+    .dependencies = .{
+        .freetype = .{ .path = "pkg/freetype" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
