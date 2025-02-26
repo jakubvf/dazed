@@ -2,6 +2,7 @@ const std = @import("std");
 const Controller = @import("controller.zig");
 const Display = @import("display.zig");
 const Waveform = @import("waveform.zig");
+const ft = @import("freetype");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -15,11 +16,21 @@ pub fn main() !void {
 
     var table = try Waveform.Table.from_wbf(allocator, "/usr/share/remarkable/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf");
 
+
+    const ft_lib = try ft.Library.init();
+    defer ft_lib.deinit();
+
+    const face = try ft_lib.initMemoryFace(@embedFile("fonts/Roboto_Mono/static/RobotoMono-Bold.ttf"), 0);
+    defer face.deinit();
+    const em_size = 48 * 64;
+    try face.setPixelSizes(0, em_size >> 6);
+    try face.selectCharmap(.unicode);
+
     var display = Display{
         .allocator = allocator,
         .controller = &controller,
         .table = &table,
-        .ft_lib = undefined,
+        .ft_face = face,
     };
     try display.sendInit();
 
@@ -49,5 +60,5 @@ pub fn main() !void {
     try display.sendPixel(997, 1000);
     try display.sendPixel(996, 1000);
 
-    // try display.sendText(100, 600, "Hello world!");
+    try display.sendText(600, 600, "Helloworld!");
 }
