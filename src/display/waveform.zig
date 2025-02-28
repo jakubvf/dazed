@@ -357,6 +357,14 @@ pub const Table = struct { // Display frame rate
     // pub fn init(allocator: std.mem.Allocator) Table {}
     pub fn deinit(table: *Table, allocator: std.mem.Allocator) void {
         allocator.free(table.temperatures);
+        for (table.waveform_lookup) |l| {
+            allocator.free(l);
+        }
+        allocator.free(table.waveform_lookup);
+        for (table.waveforms) |w| {
+            w.deinit();
+        }
+        allocator.free(table.waveforms);
     }
 
     // Reads waveform table definitions from a WBF file and returns a parsed waveform table.

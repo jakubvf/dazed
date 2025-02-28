@@ -3,8 +3,7 @@ const Display = @import("display.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    // TODO: Enable this once I fix all memory leaks :D
-    // defer gpa.deinit();
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var display = try Display.init(allocator, .sdl3);
