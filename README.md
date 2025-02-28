@@ -15,9 +15,10 @@ Then you can copy the binary `zig-out/bin/dazed` to the rM2 using ssh, or if you
 
 ## Thanks to:
 - Mattéo Delabre for working on [waved](https://github.com/matteodelabre/waved) and making this project possible
-- ghostty-org for making easily integrable Zig packages (living in pkg/)
+- ghostty-org for making easily integrable Zig packages and all the developers of those libraries (living in pkg/)
+- SDL developers for making an amazing library
 - Zig Software Foundation for creating [Zig](https://ziglang.org/)
-- reMarkable for selling the reMarkable 2
+- reMarkable for making the reMarkable 2
 
 
 ## Screenshots
