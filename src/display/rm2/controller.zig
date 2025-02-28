@@ -1,80 +1,8 @@
 const std = @import("std");
 
-// Specifies the framebuffer dimensions and margins.
-pub const FramebufferDimensions = struct {
-    // Number of pixels in a frame line
-    width: u32,
+const FramebufferDimensions = @import("../framebuffer_dimensions.zig");
 
-    // Number of bytes per frame pixel
-    depth: u32,
-
-    // Number of bytes per frame line
-    stride: u32,
-
-    // Number of actual pixels packed inside a frame pixel
-    packed_pixels: u32,
-
-    // Number of lines in a frame of the framebuffer
-    height: u32,
-
-    // Number of bytes per frame
-    frame_size: u32,
-
-    // Number of frames allocated in the framebuffer
-    frame_count: u32,
-
-    // Number of available bytes in the framebuffer
-    total_size: u32,
-
-    // Blanking margins in each frame
-    left_margin: u32,
-    right_margin: u32,
-    upper_margin: u32,
-    lower_margin: u32,
-
-    // Number of usable pixels in a line
-    real_width: u32,
-
-    // Number of usable lines in a frame
-    real_height: u32,
-
-    // Number of usable pixels in a frame
-    real_size: u32,
-
-    fn init(
-        width: u32,
-        depth: u32,
-        packed_pixels: u32,
-        height: u32,
-        frame_count: u32,
-        left_margin: u32,
-        right_margin: u32,
-        upper_margin: u32,
-        lower_margin: u32,
-    ) FramebufferDimensions {
-        const stride = width * depth;
-        const frame_size = stride * height;
-        const real_width = (width - left_margin - right_margin) * packed_pixels;
-        const real_height = (height - upper_margin - lower_margin);
-        return FramebufferDimensions{
-            .width = width,
-            .height = height,
-            .stride = stride,
-            .packed_pixels = packed_pixels,
-            .depth = depth,
-            .frame_size = frame_size,
-            .frame_count = frame_count,
-            .total_size = frame_size * frame_count,
-            .left_margin = left_margin,
-            .right_margin = right_margin,
-            .upper_margin = upper_margin,
-            .lower_margin = lower_margin,
-            .real_width = real_width,
-            .real_height = real_height,
-            .real_size = real_width * real_height,
-        };
-    }
-};
+const blank_frame = @import("blank_frame.zig").blank_frame;
 
 const log = std.log.scoped(.Controller);
 const c = @cImport({
@@ -104,8 +32,6 @@ pub const Controller = struct {
 
     framebuffer: ?[]u8 = null,
 
-    blank_frame: []u8 = undefined,
-
     back_buffer_index: u8 = 0,
 
     pub fn init() !Controller {
@@ -132,7 +58,7 @@ pub const Controller = struct {
         };
     }
 
-    pub fn start(self: *Controller, allocator: std.mem.Allocator) !void {
+    pub fn start(self: *Controller) !void {
         log.info("Starting controller", .{});
         self.setPower(true);
         _ = try self.getTemperature();
@@ -190,126 +116,12 @@ pub const Controller = struct {
 
         self.framebuffer = @as(*[]u8, @constCast(@ptrCast(&.{ .ptr = @as([*]u8, @ptrFromInt(mmap_result)), .len = self.fb_fix_info.smem_len }))).*;
 
-        log.debug("creating blank frame", .{});
-        // Create blank frame
-        self.blank_frame = try allocator.alloc(u8, self.dims.frame_size);
-        for (self.blank_frame) |*v| {
-            v.* = 0x0;
-        }
-
-        // Frame sync flag constants
-        const frame_sync: u8 = 0x1;
-        const frame_begin: u8 = 0x2;
-        const frame_data: u8 = 0x4;
-        const frame_end: u8 = 0x8;
-        _ = frame_end;
-        const line_sync: u8 = 0x10;
-        const line_begin: u8 = 0x20;
-        const line_data: u8 = 0x40;
-        const line_end: u8 = 0x80;
-        _ = line_end;
-
-        // Get pointer to the third byte of the blank frame
-        var data: [*]u8 = self.blank_frame.ptr + 2;
-
-        // First line
-        var i: usize = 0;
-        while (i < 20) : (i += 1) {
-            data[0] = frame_sync | frame_begin | line_data;
-            data += self.dims.depth;
-        }
-        i = 0;
-        while (i < 20) : (i += 1) {
-            data[0] = frame_sync | frame_begin | frame_data | line_data;
-            data += self.dims.depth;
-        }
-        i = 0;
-        while (i < 63) : (i += 1) {
-            data[0] = frame_sync | frame_data | line_data;
-            data += self.dims.depth;
-        }
-        i = 0;
-        while (i < 40) : (i += 1) {
-            data[0] = frame_sync | frame_begin | frame_data | line_data;
-            data += self.dims.depth;
-        }
-        i = 0;
-        while (i < 117) : (i += 1) {
-            data[0] = frame_sync | frame_begin | line_data;
-            data += self.dims.depth;
-        }
-
-        // Second and third lines
-        var y: usize = 1;
-        while (y < 3) : (y += 1) {
-            i = 0;
-            while (i < 8) : (i += 1) {
-                data[0] = frame_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 11) : (i += 1) {
-                data[0] = frame_sync | line_begin | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 36) : (i += 1) {
-                data[0] = frame_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 200) : (i += 1) {
-                data[0] = frame_sync | frame_begin | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 5) : (i += 1) {
-                data[0] = frame_sync | line_data;
-                data += self.dims.depth;
-            }
-        }
-
-        // Following lines
-        y = 3;
-        while (y < self.dims.height) : (y += 1) {
-            i = 0;
-            while (i < 8) : (i += 1) {
-                data[0] = frame_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 11) : (i += 1) {
-                data[0] = frame_sync | line_begin | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 7) : (i += 1) {
-                data[0] = frame_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 29) : (i += 1) {
-                data[0] = frame_sync | line_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 200) : (i += 1) {
-                data[0] = frame_sync | frame_begin | line_sync | line_data;
-                data += self.dims.depth;
-            }
-            i = 0;
-            while (i < 5) : (i += 1) {
-                data[0] = frame_sync | line_sync | line_data;
-                data += self.dims.depth;
-            }
-        }
-
         var frame_i: usize = 0;
         while (frame_i < self.dims.frame_count) : (frame_i += 1) {
             const begin = frame_i * self.dims.frame_size;
             const end = begin + self.dims.frame_size;
             const dest = self.framebuffer.?[begin..end];
-            @memcpy(dest, self.blank_frame);
+            @memcpy(dest, blank_frame);
         }
     }
 

@@ -1,36 +1,38 @@
 const std = @import("std");
-const Waveform = @import("waveform.zig");
-const Controller = @import("controller.zig");
 const ft = @import("freetype");
+const Rect = @import("rect.zig");
+const Waveform = @import("waveform.zig");
+const Controller = @import("sdl3.zig");
+const FramebufferDimensions = @import("framebuffer_dimensions.zig");
+const BlankFrame = @import("blank_frame.zig");
+
+const dims = FramebufferDimensions.rm2();
 
 const Self = @This();
 
 allocator: std.mem.Allocator,
-controller: *Controller.Controller,
+controller: *Controller,
 table: *Waveform.Table,
 ft_face: ft.Face,
 
 pub fn sendInit(self: *Self) !void {
     const waveform = try self.table.lookup(0, @intCast(try self.controller.getTemperature()));
 
-    const dims = self.controller.dims;
-    const frame_size = self.controller.blank_frame.len;
-
-    const white_frame = try self.allocator.alloc(u8, frame_size);
+    const white_frame = try self.allocator.alloc(u8, dims.frame_size);
     defer self.allocator.free(white_frame);
-    @memcpy(white_frame, self.controller.blank_frame);
-    fillFrameWithOp(white_frame, &dims, .White);
+    @memcpy(white_frame, BlankFrame.get());
+    fillFrameWithOp(white_frame, .White);
 
-    const black_frame = try self.allocator.alloc(u8, frame_size);
+    const black_frame = try self.allocator.alloc(u8, dims.frame_size);
     defer self.allocator.free(black_frame);
-    @memcpy(black_frame, self.controller.blank_frame);
-    fillFrameWithOp(black_frame, &dims, .Black);
+    @memcpy(black_frame, BlankFrame.get());
+    fillFrameWithOp(black_frame, .Black);
 
     for (waveform.items) |matrix| {
         const op = matrix[0][0];
 
         const frame = switch (op) {
-            .Noop => self.controller.blank_frame,
+            .Noop => BlankFrame.get(),
             .White => white_frame,
             .Black => black_frame,
             else => unreachable,
@@ -42,7 +44,7 @@ pub fn sendInit(self: *Self) !void {
     }
 }
 
-fn fillFrameWithOp(frame: []u8, dims: *const Controller.FramebufferDimensions, phase: Waveform.Phase) void {
+fn fillFrameWithOp(frame: []u8, phase: Waveform.Phase) void {
     var data: [*]u16 = @alignCast(@ptrCast(frame.ptr + dims.upper_margin * dims.stride + dims.left_margin * dims.depth));
 
     var y: usize = 0;
@@ -65,13 +67,6 @@ fn fillFrameWithOp(frame: []u8, dims: *const Controller.FramebufferDimensions, p
     }
 }
 
-pub const Rect = struct {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-};
-
 fn printWaveform(waveform: *const Waveform.Waveform) void {
     var from: usize = 0;
     while (from < 32) : (from += 1) {
@@ -91,24 +86,23 @@ pub fn sendRect(self: *Self, rect: Rect) !void {
     const a2 = 6;
     const waveform = try self.table.lookup(a2, @intCast(try self.controller.getTemperature()));
 
-    const dims = self.controller.dims;
-    const frame_size = self.controller.blank_frame.len;
+    const frame_size = dims.frame_size;
 
     const black_frame = try self.allocator.alloc(u8, frame_size);
     defer self.allocator.free(black_frame);
-    @memcpy(black_frame, self.controller.blank_frame);
-    fillRectWithOp(black_frame, &dims, .Black, rect);
+    @memcpy(black_frame, BlankFrame.get());
+    fillRectWithOp(black_frame, .Black, rect);
 
     const white_frame = try self.allocator.alloc(u8, frame_size);
     defer self.allocator.free(white_frame);
-    @memcpy(white_frame, self.controller.blank_frame);
-    fillRectWithOp(white_frame, &dims, .White, rect);
+    @memcpy(white_frame, BlankFrame.get());
+    fillRectWithOp(white_frame, .White, rect);
 
     for (waveform.items) |matrix| {
         const op = matrix[30][0];
 
         const frame = switch (op) {
-            .Noop => self.controller.blank_frame,
+            .Noop => BlankFrame.get(),
             .Black => black_frame,
             .White => white_frame,
             else => unreachable,
@@ -120,7 +114,7 @@ pub fn sendRect(self: *Self, rect: Rect) !void {
     }
 }
 
-fn alignRect(rect: Rect, dims: *const Controller.FramebufferDimensions) Rect {
+fn alignRect(rect: Rect) Rect {
     const mask = dims.packed_pixels - 1;
 
     if ((rect.width & mask) == 0 and (rect.x & mask) == 0) {
@@ -136,8 +130,8 @@ fn alignRect(rect: Rect, dims: *const Controller.FramebufferDimensions) Rect {
     return result;
 }
 
-fn fillRectWithOp(frame: []u8, dims: *const Controller.FramebufferDimensions, phase: Waveform.Phase, unalignedRect: Rect) void {
-    const rect = alignRect(unalignedRect, dims);
+fn fillRectWithOp(frame: []u8, phase: Waveform.Phase, unalignedRect: Rect) void {
+    const rect = alignRect(unalignedRect);
 
     var data: [*]u16 = @alignCast(@ptrCast(
         frame.ptr + (dims.upper_margin + @as(u32, @intCast(rect.y))) * dims.stride + (dims.left_margin + @as(u32, @intCast(rect.x)) / dims.packed_pixels) * dims.depth,
@@ -163,22 +157,22 @@ fn fillRectWithOp(frame: []u8, dims: *const Controller.FramebufferDimensions, ph
     }
 }
 
-pub fn sendPixel(self: *Self, x: usize, y: usize) !void {
+pub fn sendPixel(self: *Self, x: u32, y: u32) !void {
     const a2 = 6;
     const waveform = try self.table.lookup(a2, @intCast(try self.controller.getTemperature()));
 
-    const frame_size = self.controller.blank_frame.len;
+    const frame_size = dims.frame_size;
     const black_frame = try self.allocator.alloc(u8, frame_size);
     defer self.allocator.free(black_frame);
-    @memcpy(black_frame, self.controller.blank_frame);
+    @memcpy(black_frame, BlankFrame.get());
 
-    setPixel(black_frame, &self.controller.dims, .Black, x, y);
+    setPixel(black_frame, .Black, x, y);
 
     for (waveform.items) |matrix| {
         const op = matrix[30][0];
 
         const frame = switch (op) {
-            .Noop => self.controller.blank_frame,
+            .Noop => BlankFrame.get(),
             .Black => black_frame,
             else => unreachable,
         };
@@ -189,7 +183,7 @@ pub fn sendPixel(self: *Self, x: usize, y: usize) !void {
     }
 }
 
-fn setPixel(frame: []u8, dims: *const Controller.FramebufferDimensions, phase: Waveform.Phase, x: u32, y: u32) void {
+fn setPixel(frame: []u8, phase: Waveform.Phase, x: u32, y: u32) void {
     const byte_pos = (dims.upper_margin + @as(u32, @intCast(y))) * dims.stride +
         (dims.left_margin + @as(u32, @intCast(x)) / dims.packed_pixels) * dims.depth;
 
@@ -207,24 +201,23 @@ pub fn sendText(self: *Self, x: u32, y: u32, text: []const u8) !void {
     const a2 = 6;
     const waveform = try self.table.lookup(a2, @intCast(try self.controller.getTemperature()));
 
-    const dims = self.controller.dims;
-    const frame_size = self.controller.blank_frame.len;
+    const frame_size = dims.frame_size;
 
     const black_frame = try self.allocator.alloc(u8, frame_size);
     defer self.allocator.free(black_frame);
-    @memcpy(black_frame, self.controller.blank_frame);
-    try fillFrameWithText(black_frame, &dims, .Black, self.ft_face, x, y, text);
+    @memcpy(black_frame, BlankFrame.get());
+    try fillFrameWithText(black_frame, .Black, self.ft_face, x, y, text);
 
     const white_frame = try self.allocator.alloc(u8, frame_size);
     defer self.allocator.free(white_frame);
-    @memcpy(white_frame, self.controller.blank_frame);
-    try fillFrameWithText(white_frame, &dims, .White, self.ft_face, x, y, text);
+    @memcpy(white_frame, BlankFrame.get());
+    try fillFrameWithText(white_frame, .White, self.ft_face, x, y, text);
 
     for (waveform.items) |matrix| {
         const op = matrix[30][0];
 
         const frame = switch (op) {
-            .Noop => self.controller.blank_frame,
+            .Noop => BlankFrame.get(),
             .Black => black_frame,
             .White => white_frame,
             else => unreachable,
@@ -236,7 +229,7 @@ pub fn sendText(self: *Self, x: u32, y: u32, text: []const u8) !void {
     }
 }
 
-fn fillFrameWithText(frame: []u8, dims: *const Controller.FramebufferDimensions, phase: Waveform.Phase, face: ft.Face, x_pos: u32, y_pos: u32, text: []const u8) !void {
+fn fillFrameWithText(frame: []u8, phase: Waveform.Phase, face: ft.Face, x_pos: u32, y_pos: u32, text: []const u8) !void {
     _ = phase; //TODO
 
     var x = x_pos;
@@ -256,7 +249,7 @@ fn fillFrameWithText(frame: []u8, dims: *const Controller.FramebufferDimensions,
 
         const draw_x: i32 = @as(i32, @intCast(x)) + x_offset;
         const draw_y: i32 = @as(i32, @intCast(dims.real_height)) - @as(i32, @intCast(y)) - y_offset;
-        drawChar(frame, dims, bitmap, draw_x, draw_y);
+        drawChar(frame, bitmap, draw_x, draw_y);
 
         x += @intCast(metrics.horiAdvance >> 6);
         if (x >= dims.real_width) {
@@ -265,10 +258,10 @@ fn fillFrameWithText(frame: []u8, dims: *const Controller.FramebufferDimensions,
         }
     }
 
-    drawBaseline(frame, dims, y_pos, dims.real_width);
+    drawBaseline(frame, y_pos, dims.real_width);
 }
 
-fn drawChar(frame: []u8, dims: *const Controller.FramebufferDimensions, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32) void {
+fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32) void {
     const width: i32 = @intCast(bitmap.width);
     const height: i32 = @intCast(bitmap.rows);
     const bitmap_buffer = @as([*]u8, @ptrCast(bitmap.buffer));
@@ -285,18 +278,18 @@ fn drawChar(frame: []u8, dims: *const Controller.FramebufferDimensions, bitmap: 
 
                 const pixel_value: u8 = bitmap_buffer[bitmap_index];
                 if (pixel_value != 0) {
-                    setPixel(frame, dims, .Black, @intCast(buffer_x), @intCast(buffer_y));
+                    setPixel(frame, .Black, @intCast(buffer_x), @intCast(buffer_y));
                 }
             }
         }
     }
 }
 
-fn drawBaseline(frame: []u8, dims: *const Controller.FramebufferDimensions, y: u32, width: u32) void {
+fn drawBaseline(frame: []u8, y: u32, width: u32) void {
     if (y < 0 or y >= @divFloor(@as(u32, @intCast(frame.len)), width)) return;
 
     var x: u32 = 0;
     while (x < width) : (x += 1) {
-        setPixel(frame, dims, .Black, x, y);
+        setPixel(frame, .Black, x, y);
     }
 }

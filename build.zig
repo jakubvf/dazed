@@ -1,15 +1,22 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{
-        .default_target = std.Target.Query{
-            .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_a7 },
-            .cpu_features_add = std.Target.arm.featureSet(&[_]std.Target.arm.Feature{std.Target.arm.Feature.neon}),
-            .cpu_arch = .arm,
-            .os_tag = .linux,
-            .abi = .musleabihf,
-        },
-    });
+    const emulator = b.option(bool, "emulator", "Whether to build for the SDL3 emulator") orelse false;
+
+    const target = t: {
+        break :t if (!emulator)
+            b.standardTargetOptions(.{
+                .default_target = std.Target.Query{
+                    .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_a7 },
+                    .cpu_features_add = std.Target.arm.featureSet(&[_]std.Target.arm.Feature{std.Target.arm.Feature.neon}),
+                    .cpu_arch = .arm,
+                    .os_tag = .linux,
+                    .abi = .musleabihf,
+                },
+            })
+        else
+            b.standardTargetOptions(.{});
+    };
 
     const optimize = b.standardOptimizeOption(.{});
 
@@ -27,6 +34,10 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibrary(freetype.artifact("freetype"));
     exe.root_module.addImport("freetype", freetype.module("freetype"));
+
+    if (emulator) {
+        exe.linkSystemLibrary("SDL3");
+    }
 
     b.installArtifact(exe);
 
