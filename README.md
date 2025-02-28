@@ -9,7 +9,7 @@ Note that if you want to build the emulator you must have SDL3 installed on your
 $ # In the project directory
 
 $ zig build -Doptimize=ReleaseFast # build for the reMarkable 2
-$ zig build -Doptimize=ReleaseFast # build for the emulator
+$ zig build -Doptimize=ReleaseFast -Demulator # build for the emulator
 ```
 Then you can copy the binary `zig-out/bin/dazed` to the rM2 using ssh, or if you built the emulator run the binary directly.
 
