@@ -3,6 +3,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const emulator = b.option(bool, "emulator", "Whether to build for the SDL3 emulator") orelse false;
 
+    const options = b.addOptions();
+    options.addOption(bool, "emulator", emulator);
+
     const target = t: {
         break :t if (!emulator)
             b.standardTargetOptions(.{
@@ -26,6 +29,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    exe.root_module.addOptions("build_config", options);
     exe.linkLibC();
 
     const freetype = b.dependency("freetype", .{
