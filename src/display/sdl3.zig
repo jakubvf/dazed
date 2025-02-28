@@ -37,8 +37,8 @@ pub fn init(allocator: std.mem.Allocator) !Self {
 
     const texture = c.SDL_CreateTexture(
         renderer,
-        c.SDL_PIXELFORMAT_ARGB8888, // Using RGBA format where all RGB components will be the same for grayscale
-        c.SDL_TEXTUREACCESS_STREAMING, // We'll be updating this texture frequently
+        c.SDL_PIXELFORMAT_ARGB8888,
+        c.SDL_TEXTUREACCESS_STREAMING,
         dims.real_width,
         dims.real_height,
     ) orelse bail();

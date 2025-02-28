@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const FramebufferDimensions = @import("../framebuffer_dimensions.zig");
+const FramebufferDimensions = @import("framebuffer_dimensions.zig");
 
 const blank_frame = @import("blank_frame.zig").blank_frame;
 

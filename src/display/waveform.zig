@@ -360,7 +360,7 @@ pub const Table = struct { // Display frame rate
     }
 
     // Reads waveform table definitions from a WBF file and returns a parsed waveform table.
-    pub fn from_wbf(allocator: std.mem.Allocator, path: []const u8) !Table {
+    pub fn fromWbf(allocator: std.mem.Allocator, path: []const u8) !Table {
         var result = Table{
             .frame_rate = 0,
             .mode_count = 0,

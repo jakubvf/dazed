@@ -1,10 +1,15 @@
+//
+// This is a GLOBAL VARIABLE
+// Maybe this isn't ideal, but I'll come up with something better once this bites me back in the future.
+//
+
 const std = @import("std");
 const FramebufferDimensions = @import("framebuffer_dimensions.zig");
 const dims = FramebufferDimensions.rm2();
 
 // TODO: It's dangerous to leave this undefined, but for now, let's just roll with it.
 var blank_frame:[] const u8 = undefined;
-var initialized = true;
+var initialized = false;
 
 pub fn get() []const u8 {
     if (!initialized) @panic("blank_frame not initialized!");
@@ -13,6 +18,8 @@ pub fn get() []const u8 {
 }
 
 pub fn init(allocator: std.mem.Allocator) void {
+    if (initialized) return;
+
     const result = allocator.alloc(u8, dims.frame_size) catch @panic("could not allocate blank_frame");
 
     for (result) |*v| {
@@ -129,4 +136,9 @@ pub fn init(allocator: std.mem.Allocator) void {
     blank_frame = result;
 
     initialized = true;
+}
+
+
+pub fn deinit(allocator: std.mem.Allocator) void {
+    allocator.free(blank_frame);
 }
