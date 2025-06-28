@@ -72,18 +72,6 @@ pub const Face = struct {
         ));
     }
 
-    pub fn setPixelSizes(
-        self: Face,
-        pixel_width: u32,
-        pixel_height: u32,
-    ) Error!void {
-        return intToError(c.FT_Set_Pixel_Sizes(
-            self.handle,
-            pixel_width,
-            pixel_height,
-        ));
-    }
-
     /// Select a bitmap strike. To be more precise, this function sets the
     /// scaling factors of the active FT_Size object in a face so that bitmaps
     /// from this particular strike are taken by FT_Load_Glyph and friends.
@@ -290,7 +278,9 @@ pub const LoadFlags = packed struct {
     color: bool = false,
     compute_metrics: bool = false,
     bitmap_metrics_only: bool = false,
-    _padding2: u9 = 0,
+    _padding2: u1 = 0,
+    no_svg: bool = false,
+    _padding3: u7 = 0,
 
     test {
         // This must always be an i32 size so we can bitcast directly.

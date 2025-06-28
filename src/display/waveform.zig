@@ -328,7 +328,7 @@ pub const Table = struct { // Display frame rate
 
     pub fn lookup(self: *const Table, mode: ModeID, temperature: Temperature) !*const Waveform {
         if (mode < 0 or mode >= self.mode_count) {
-            std.log.err("Mode ID {} not supported, available modes are 0-{}", .{mode, self.mode_count - 1});
+            std.log.err("Mode ID {} not supported, available modes are 0-{}", .{ mode, self.mode_count - 1 });
             return error.WaveformLookup;
         }
 
@@ -350,8 +350,7 @@ pub const Table = struct { // Display frame rate
             }
         }
 
-            return error.WaveformLookup;
-
+        return error.WaveformLookup;
     }
 
     // pub fn init(allocator: std.mem.Allocator) Table {}
@@ -448,7 +447,6 @@ pub const Table = struct { // Display frame rate
 
         result.waveforms, result.waveform_lookup = try parseWaveforms(allocator, &header, blocks, file_contents, file_contents[file_offset..]);
 
-
         return result;
     }
 
@@ -479,7 +477,6 @@ pub const Table = struct { // Display frame rate
             var mode_ptr = @as(usize, @intCast(try parsePointer(table[table_offset .. table_offset + 4])));
             table_offset += 4; // parsePointer doesn't move forward the offset
 
-
             var temp_lookup = try std.ArrayList(usize).initCapacity(allocator, temp_count);
             defer temp_lookup.deinit();
 
@@ -491,12 +488,11 @@ pub const Table = struct { // Display frame rate
                 // This is going to require updating on 0.14.0... here ya go
                 // https://ziglang.org/documentation/master/std/#std.sort.lowerBound
                 const S = struct {
-                    fn lower_u32(context: void, lhs: u32, rhs: u32) bool {
-                        _ = context;
-                        return lhs < rhs;
+                    fn lowerU32(context: u32, item: u32) std.math.Order {
+                        return std.math.order(context, item);
                     }
                 };
-                const lowerBound_index = std.sort.lowerBound(u32, waveform_begin, blocks, {}, S.lower_u32);
+                const lowerBound_index = std.sort.lowerBound(u32, blocks, waveform_begin, S.lowerU32);
                 try temp_lookup.append(lowerBound_index);
             }
 

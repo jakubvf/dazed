@@ -1,5 +1,6 @@
 .{
-    .name = "dazed",
+    .name = .dazed,
+    .fingerprint = 0x223961d3f4362016,
 
     .version = "0.0.1",
 

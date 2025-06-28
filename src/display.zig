@@ -48,8 +48,6 @@ pub fn Display(comptime backend: DisplayBackend) type {
             self.ft_lib = try ft.Library.init();
             self.ft_face = ff: {
                 const face = try self.ft_lib.initMemoryFace(@embedFile("fonts/Roboto_Mono/static/RobotoMono-Bold.ttf"), 0);
-                const em_size = 48 * 64;
-                try face.setPixelSizes(0, em_size >> 6);
                 try face.selectCharmap(.unicode);
 
                 break :ff face;
@@ -282,7 +280,6 @@ fn fillRectWithOp(frame: []u8, phase: Phase, unalignedRect: Rect) void {
     }
 }
 
-
 fn setPixel(frame: []u8, phase: Phase, x: u32, y: u32) void {
     const byte_pos = (dims.upper_margin + @as(u32, @intCast(y))) * dims.stride +
         (dims.left_margin + @as(u32, @intCast(x)) / dims.packed_pixels) * dims.depth;
@@ -310,21 +307,20 @@ fn fillFrameWithText(frame: []u8, phase: Waveform.Phase, face: ft.Face, x_pos: u
         const metrics = &face.handle.*.glyph.*.metrics;
         const glyph_height: u32 = @intCast(bitmap.rows);
 
-        const x_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingX)), 64);
-        const y_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingY)), 64);
+        if (bitmap.buffer != null) {
+            const x_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingX)), 64);
+            const y_offset: i32 = @divFloor(@as(i32, @intCast(metrics.horiBearingY)), 64);
 
-        const draw_x: i32 = @as(i32, @intCast(x)) + x_offset;
-        const draw_y: i32 = @as(i32, @intCast(dims.real_height)) - @as(i32, @intCast(y)) - y_offset;
-        drawChar(frame, bitmap, draw_x, draw_y, phase);
-
+            const draw_x: i32 = @as(i32, @intCast(x)) + x_offset;
+            const draw_y: i32 = @as(i32, @intCast(dims.real_height)) - @as(i32, @intCast(y)) - y_offset;
+            drawChar(frame, bitmap, draw_x, draw_y, phase);
+        }
         x += @intCast(metrics.horiAdvance >> 6);
         if (x >= dims.real_width) {
             x = dims.left_margin;
             y += glyph_height;
         }
     }
-
-    drawHorizontalLine(frame, y_pos, dims.real_width, phase);
 }
 
 fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, phase: Phase) void {
@@ -352,7 +348,6 @@ fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, 
         }
     }
 }
-
 
 fn drawHorizontalLine(frame: []u8, y: u32, width: u32, phase: Phase) void {
     if (y < 0 or y >= @divFloor(@as(u32, @intCast(frame.len)), width)) return;
