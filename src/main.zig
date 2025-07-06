@@ -33,9 +33,9 @@ pub fn main() !void {
         var drawing_context = try initDrawingContext(allocator, display_interface);
         defer deinitDrawingContext(&drawing_context, allocator);
         
+        try drawing_context.startFlushThread();
         try drawing_context.clear();
         return Paint.run(allocator, &drawing_context);
-        // return HackerNews.run(allocator, &drawing_context);
     } else {
         const RM2 = @import("display/rm2.zig");
         var controller = try RM2.init(allocator);
@@ -45,8 +45,9 @@ pub fn main() !void {
         var drawing_context = try initDrawingContext(allocator, display_interface);
         defer deinitDrawingContext(&drawing_context, allocator);
         
+        try drawing_context.startFlushThread();
         try drawing_context.clear();
-        // return HackerNews.run(allocator, &drawing_context);
+        try drawing_context.flushSync();
         return Paint.run(allocator, &drawing_context);
     }
 }

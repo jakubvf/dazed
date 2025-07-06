@@ -8,6 +8,14 @@ ft_face: ft.Face,
 current_frame: []u8,
 last_flushed_frame: []u8,
 dirty_rect: ?Rect,
+drawing_mutex: std.Thread.Mutex,
+// Threading support
+flush_thread: ?std.Thread,
+flush_mutex: std.Thread.Mutex,
+flush_condition: std.Thread.Condition,
+flush_requested: std.atomic.Value(bool),
+should_exit: std.atomic.Value(bool),
+flush_in_progress: std.atomic.Value(bool),
 
 extern fn drawCharNeon(frame: *c_char, frame_len: c_ulong, bitmap_buffer: *c_char, bitmap_width: c_int, bitmap_height: c_int, x_offset: c_int, y_offset: c_int, phase: c_ushort) callconv(.C) void;
 
@@ -18,7 +26,7 @@ pub fn init(allocator: std.mem.Allocator, display: DisplayInterface, waveform_ta
     const last_flushed_frame = try allocator.alloc(u8, dims.frame_size);
     @memcpy(last_flushed_frame, BlankFrame.get());
     
-    return Self{
+    const result = Self{
         .display = display,
         .allocator = allocator,
         .waveform_table = waveform_table,
@@ -27,10 +35,37 @@ pub fn init(allocator: std.mem.Allocator, display: DisplayInterface, waveform_ta
         .current_frame = current_frame,
         .last_flushed_frame = last_flushed_frame,
         .dirty_rect = null,
+        .drawing_mutex = std.Thread.Mutex{},
+        .flush_thread = null,
+        .flush_mutex = std.Thread.Mutex{},
+        .flush_condition = std.Thread.Condition{},
+        .flush_requested = std.atomic.Value(bool).init(false),
+        .should_exit = std.atomic.Value(bool).init(false),
+        .flush_in_progress = std.atomic.Value(bool).init(false),
     };
+    
+    return result;
+}
+
+pub fn startFlushThread(self: *Self) !void {
+    if (self.flush_thread != null) {
+        return; // Already started
+    }
+    
+    self.flush_thread = try std.Thread.spawn(.{}, flushThreadMain, .{self});
 }
 
 pub fn deinit(self: *Self) void {
+    // Signal thread to exit and wait for it (only if thread was started)
+    if (self.flush_thread) |thread| {
+        self.should_exit.store(true, .monotonic);
+        self.flush_mutex.lock();
+        self.flush_condition.signal();
+        self.flush_mutex.unlock();
+        
+        thread.join();
+    }
+    
     self.allocator.free(self.current_frame);
     self.allocator.free(self.last_flushed_frame);
 }
@@ -84,6 +119,9 @@ pub fn rectangle(self: *Self, rect: Rect) !void {
     var prof_scope = profiler.profile("DrawingContext.rectangle");
     defer prof_scope.deinit();
 
+    self.drawing_mutex.lock();
+    defer self.drawing_mutex.unlock();
+    
     fillRectWithOp(self.current_frame, .Black, rect);
     self.expandDirtyRect(rect);
 }
@@ -92,6 +130,9 @@ pub fn text(self: *Self, x: u32, y: u32, string: []const u8) !void {
     var prof_scope = profiler.profile("DrawingContext.text");
     defer prof_scope.deinit();
 
+    self.drawing_mutex.lock();
+    defer self.drawing_mutex.unlock();
+    
     const text_rect = try calculateTextBounds(self.ft_face, x, y, string);
     try fillFrameWithText(self.current_frame, .Black, self.ft_face, x, y, string);
     self.expandDirtyRect(text_rect);
@@ -242,9 +283,44 @@ fn expandDirtyRect(self: *Self, rect: Rect) void {
 }
 
 pub fn flush(self: *Self) !void {
-    if (self.dirty_rect == null) return;
+    // Signal background thread to perform flush (let it check dirty_rect)
+    self.flush_mutex.lock();
+    self.flush_requested.store(true, .monotonic);
+    self.flush_condition.signal();
+    self.flush_mutex.unlock();
+}
+
+pub fn flushSync(self: *Self) !void {
+    // Wait for any ongoing flush to complete
+    while (self.flush_in_progress.load(.monotonic)) {
+        std.Thread.yield() catch {};
+    }
     
-    var prof_scope = profiler.profile("DrawingContext.flush");
+    // Perform synchronous flush
+    _ = try self.performFlush();
+}
+
+fn performFlush(self: *Self) !bool {
+    // Create a snapshot of the current frame for flushing
+    const flush_frame = try self.allocator.alloc(u8, dims.frame_size);
+    defer self.allocator.free(flush_frame);
+    
+    var dirty_rect_copy: ?Rect = null;
+    
+    // Lock drawing operations briefly to copy frame data
+    {
+        self.drawing_mutex.lock();
+        defer self.drawing_mutex.unlock();
+        
+        if (self.dirty_rect == null) {
+            return false;
+        }
+        
+        @memcpy(flush_frame, self.current_frame);
+        dirty_rect_copy = self.dirty_rect;
+    }
+    
+    var prof_scope = profiler.profile("DrawingContext.performFlush");
     defer prof_scope.deinit();
     
     const a2 = 6;
@@ -254,7 +330,7 @@ pub fn flush(self: *Self) !void {
     const black_frame = try self.allocator.alloc(u8, dims.frame_size);
     defer self.allocator.free(black_frame);
     @memcpy(black_frame, BlankFrame.get());
-    createDifferenceFrame(black_frame, self.current_frame, self.last_flushed_frame, .Black);
+    createDifferenceFrame(black_frame, flush_frame, self.last_flushed_frame, .Black);
     
     const white_frame = try self.allocator.alloc(u8, dims.frame_size);
     defer self.allocator.free(white_frame);
@@ -274,9 +350,16 @@ pub fn flush(self: *Self) !void {
         try self.display.pageFlip();
     }
     
-    // Update last flushed frame
-    @memcpy(self.last_flushed_frame, self.current_frame);
-    self.dirty_rect = null;
+    // Update last flushed frame and clear dirty rect
+    {
+        self.drawing_mutex.lock();
+        defer self.drawing_mutex.unlock();
+        
+        @memcpy(self.last_flushed_frame, flush_frame);
+        self.dirty_rect = null;
+    }
+    
+    return true;
 }
 
 fn createDifferenceFrame(dest_frame: []u8, current_frame: []const u8, last_frame: []const u8, phase: Phase) void {
@@ -425,5 +508,38 @@ fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, 
             
             x += @intCast(pixels_to_process);
         }
+    }
+}
+
+fn flushThreadMain(self: *Self) void {
+    while (!self.should_exit.load(.monotonic)) {
+        self.flush_mutex.lock();
+        
+        // Wait for flush request or exit signal
+        while (!self.flush_requested.load(.monotonic) and !self.should_exit.load(.monotonic)) {
+            self.flush_condition.wait(&self.flush_mutex);
+        }
+        
+        if (self.should_exit.load(.monotonic)) {
+            self.flush_mutex.unlock();
+            break;
+        }
+        
+        // At this point, flush_requested must be true (due to wait condition)
+        self.flush_in_progress.store(true, .monotonic);
+        self.flush_mutex.unlock();
+        
+        // Perform flush outside the mutex to avoid blocking drawing operations
+        const did_flush = self.performFlush() catch |err| blk2: {
+            std.log.err("Flush error: {}", .{err});
+            break :blk2 false;
+        };
+        
+        // Only clear flush_requested if we actually performed a flush
+        if (did_flush) {
+            self.flush_requested.store(false, .monotonic);
+        }
+        
+        self.flush_in_progress.store(false, .monotonic);
     }
 }
