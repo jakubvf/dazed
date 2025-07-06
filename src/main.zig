@@ -39,7 +39,8 @@ pub fn main() !void {
     }
 }
 
-fn initDrawingContext(allocator: std.mem.Allocator, display_interface: @import("display/interface.zig")) !DrawingContext {
+const DisplayInterface = @import("display/Interface.zig");
+fn initDrawingContext(allocator: std.mem.Allocator, display_interface: DisplayInterface) !DrawingContext {
     const wbf_file = if (BuildConfig.emulator) 
         "src/waveforms/320_R467_AF4731_ED103TC2C6_VB3300-KCD_TC.wbf" 
     else 
