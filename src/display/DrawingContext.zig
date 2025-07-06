@@ -225,24 +225,55 @@ fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, 
     const width: i32 = @intCast(bitmap.width);
     const height: i32 = @intCast(bitmap.rows);
     const bitmap_buffer = @as([*]u8, @ptrCast(bitmap.buffer));
+    const phase_bits: u16 = @intFromEnum(phase);
 
     var y: i32 = 0;
     while (y < height) : (y += 1) {
+        const buffer_y_pos = y + y_offset;
+        if (buffer_y_pos < 0 or buffer_y_pos >= @as(i32, @intCast(dims.real_height))) continue;
+        const buffer_y = dims.real_height - @as(u32, @intCast(buffer_y_pos)) - 1;
+
         var x: i32 = 0;
-        while (x < width) : (x += 1) {
+        while (x < width) {
             const buffer_x = x + x_offset;
-            const y_pos = y + y_offset;
-            if (y_pos < 0 or y_pos >= @as(i32, @intCast(dims.real_height))) continue;
-            const buffer_y = dims.real_height - @as(u32, @intCast(y_pos)) - 1;
+            if (buffer_x < dims.left_margin or buffer_x >= dims.real_width) {
+                x += 1;
+                continue;
+            }
 
-            if (buffer_x >= dims.left_margin and buffer_x < dims.real_width and buffer_y >= dims.upper_margin and buffer_y < dims.real_height) {
-                const bitmap_index: usize = @intCast(y * width + x);
-
+            // Process pixels up to the next word boundary
+            const pixels_remaining_in_word = dims.packed_pixels - (@as(u32, @intCast(buffer_x)) % dims.packed_pixels);
+            const pixels_to_process = @min(pixels_remaining_in_word, @as(u32, @intCast(width - x)));
+            
+            // Calculate word position using the actual buffer_x
+            const byte_pos = (dims.upper_margin + buffer_y) * dims.stride + 
+                           (dims.left_margin + @as(u32, @intCast(buffer_x)) / dims.packed_pixels) * dims.depth;
+            const pixel_word: *u16 = @alignCast(@ptrCast(&frame[byte_pos]));
+            
+            var word_value = pixel_word.*;
+            var changed = false;
+            
+            // Process pixels in this word
+            var px: u32 = 0;
+            while (px < pixels_to_process) : (px += 1) {
+                const bitmap_index: usize = @intCast(y * width + x + @as(i32, @intCast(px)));
                 const pixel_value: u8 = bitmap_buffer[bitmap_index];
+                
                 if (pixel_value != 0) {
-                    setPixel(frame, phase, @intCast(buffer_x), @intCast(buffer_y));
+                    const pixel_pos = (@as(u32, @intCast(buffer_x)) + px) % dims.packed_pixels;
+                    const shift_amount: u4 = @intCast((dims.packed_pixels - 1 - pixel_pos) * 2);
+                    const pixel_mask = ~(@as(u16, 0b11) << shift_amount);
+                    
+                    word_value = (word_value & pixel_mask) | (phase_bits << shift_amount);
+                    changed = true;
                 }
             }
+            
+            if (changed) {
+                pixel_word.* = word_value;
+            }
+            
+            x += @intCast(pixels_to_process);
         }
     }
 }
