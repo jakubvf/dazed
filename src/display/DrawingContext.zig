@@ -5,13 +5,49 @@ allocator: std.mem.Allocator,
 waveform_table: Waveform.Table,
 ft_lib: ft.Library,
 ft_face: ft.Face,
+current_frame: []u8,
+last_flushed_frame: []u8,
+dirty_rect: ?Rect,
 
 extern fn drawCharNeon(frame: *c_char, frame_len: c_ulong, bitmap_buffer: *c_char, bitmap_width: c_int, bitmap_height: c_int, x_offset: c_int, y_offset: c_int, phase: c_ushort) callconv(.C) void;
+
+pub fn init(allocator: std.mem.Allocator, display: DisplayInterface, waveform_table: Waveform.Table, ft_lib: ft.Library, ft_face: ft.Face) !Self {
+    const current_frame = try allocator.alloc(u8, dims.frame_size);
+    @memcpy(current_frame, BlankFrame.get());
+    
+    const last_flushed_frame = try allocator.alloc(u8, dims.frame_size);
+    @memcpy(last_flushed_frame, BlankFrame.get());
+    
+    return Self{
+        .display = display,
+        .allocator = allocator,
+        .waveform_table = waveform_table,
+        .ft_lib = ft_lib,
+        .ft_face = ft_face,
+        .current_frame = current_frame,
+        .last_flushed_frame = last_flushed_frame,
+        .dirty_rect = null,
+    };
+}
+
+pub fn deinit(self: *Self) void {
+    self.allocator.free(self.current_frame);
+    self.allocator.free(self.last_flushed_frame);
+}
 
 pub fn clear(self: *Self) !void {
     var prof_scope = profiler.profile("DrawingContext.clear");
     defer prof_scope.deinit();
 
+    @memcpy(self.current_frame, BlankFrame.get());
+    
+    self.dirty_rect = Rect{
+        .x = 0,
+        .y = 0,
+        .width = dims.real_width,
+        .height = dims.real_height,
+    };
+    
     const waveform = try self.waveform_table.lookup(0, @intCast(try self.display.getTemperature()));
 
     const white_frame = try self.allocator.alloc(u8, dims.frame_size);
@@ -38,76 +74,27 @@ pub fn clear(self: *Self) !void {
 
         try self.display.pageFlip();
     }
+    
+    // Update last flushed frame after clear
+    @memcpy(self.last_flushed_frame, self.current_frame);
+    self.dirty_rect = null;
 }
 
 pub fn rectangle(self: *Self, rect: Rect) !void {
     var prof_scope = profiler.profile("DrawingContext.rectangle");
     defer prof_scope.deinit();
 
-    const a2 = 6;
-    const waveform = try self.waveform_table.lookup(a2, @intCast(try self.display.getTemperature()));
-
-    const frame_size = dims.frame_size;
-
-    const black_frame = try self.allocator.alloc(u8, frame_size);
-    defer self.allocator.free(black_frame);
-    @memcpy(black_frame, BlankFrame.get());
-    fillRectWithOp(black_frame, .Black, rect);
-
-    const white_frame = try self.allocator.alloc(u8, frame_size);
-    defer self.allocator.free(white_frame);
-    @memcpy(white_frame, BlankFrame.get());
-    fillRectWithOp(white_frame, .White, rect);
-
-    for (waveform.items) |matrix| {
-        const op = matrix[30][0];
-
-        const frame = switch (op) {
-            .Noop => BlankFrame.get(),
-            .Black => black_frame,
-            .White => white_frame,
-            else => unreachable,
-        };
-
-        @memcpy(self.display.getBackBuffer(), frame);
-
-        try self.display.pageFlip();
-    }
+    fillRectWithOp(self.current_frame, .Black, rect);
+    self.expandDirtyRect(rect);
 }
 
 pub fn text(self: *Self, x: u32, y: u32, string: []const u8) !void {
     var prof_scope = profiler.profile("DrawingContext.text");
     defer prof_scope.deinit();
 
-    const a2 = 6;
-    const waveform = try self.waveform_table.lookup(a2, @intCast(try self.display.getTemperature()));
-
-    const frame_size = dims.frame_size;
-
-    const black_frame = try self.allocator.alloc(u8, frame_size);
-    defer self.allocator.free(black_frame);
-    @memcpy(black_frame, BlankFrame.get());
-    try fillFrameWithText(black_frame, .Black, self.ft_face, x, y, string);
-
-    const white_frame = try self.allocator.alloc(u8, frame_size);
-    defer self.allocator.free(white_frame);
-    @memcpy(white_frame, BlankFrame.get());
-    try fillFrameWithText(white_frame, .White, self.ft_face, x, y, string);
-
-    for (waveform.items) |matrix| {
-        const op = matrix[30][0];
-
-        const frame = switch (op) {
-            .Noop => BlankFrame.get(),
-            .Black => black_frame,
-            .White => white_frame,
-            else => unreachable,
-        };
-
-        @memcpy(self.display.getBackBuffer(), frame);
-
-        try self.display.pageFlip();
-    }
+    const text_rect = try calculateTextBounds(self.ft_face, x, y, string);
+    try fillFrameWithText(self.current_frame, .Black, self.ft_face, x, y, string);
+    self.expandDirtyRect(text_rect);
 }
 
 const DisplayInterface = @import("Interface.zig");
@@ -234,6 +221,154 @@ fn fillFrameWithText(frame: []u8, phase: Waveform.Phase, face: ft.Face, x_pos: u
             y += glyph_height;
         }
     }
+}
+
+fn expandDirtyRect(self: *Self, rect: Rect) void {
+    if (self.dirty_rect) |current| {
+        const min_x = @min(current.x, rect.x);
+        const min_y = @min(current.y, rect.y);
+        const max_x = @max(current.x + current.width, rect.x + rect.width);
+        const max_y = @max(current.y + current.height, rect.y + rect.height);
+        
+        self.dirty_rect = Rect{
+            .x = min_x,
+            .y = min_y,
+            .width = max_x - min_x,
+            .height = max_y - min_y,
+        };
+    } else {
+        self.dirty_rect = rect;
+    }
+}
+
+pub fn flush(self: *Self) !void {
+    if (self.dirty_rect == null) return;
+    
+    var prof_scope = profiler.profile("DrawingContext.flush");
+    defer prof_scope.deinit();
+    
+    const a2 = 6;
+    const waveform = try self.waveform_table.lookup(a2, @intCast(try self.display.getTemperature()));
+    
+    // Create frames with only the differences since last flush
+    const black_frame = try self.allocator.alloc(u8, dims.frame_size);
+    defer self.allocator.free(black_frame);
+    @memcpy(black_frame, BlankFrame.get());
+    createDifferenceFrame(black_frame, self.current_frame, self.last_flushed_frame, .Black);
+    
+    const white_frame = try self.allocator.alloc(u8, dims.frame_size);
+    defer self.allocator.free(white_frame);
+    @memcpy(white_frame, BlankFrame.get());
+    
+    for (waveform.items) |matrix| {
+        const op = matrix[30][0];
+        
+        const frame = switch (op) {
+            .Noop => BlankFrame.get(),
+            .Black => black_frame,
+            .White => white_frame,
+            else => unreachable,
+        };
+        
+        @memcpy(self.display.getBackBuffer(), frame);
+        try self.display.pageFlip();
+    }
+    
+    // Update last flushed frame
+    @memcpy(self.last_flushed_frame, self.current_frame);
+    self.dirty_rect = null;
+}
+
+fn createDifferenceFrame(dest_frame: []u8, current_frame: []const u8, last_frame: []const u8, phase: Phase) void {
+    const phase_bits: u16 = @intFromEnum(phase);
+    
+    // Process the frame word by word (each word contains multiple pixels)
+    var data_offset: usize = dims.upper_margin * dims.stride + dims.left_margin * dims.depth;
+    
+    var y: usize = 0;
+    while (y < dims.real_height) : (y += 1) {
+        var x: usize = 0;
+        while (x < dims.real_width) : (x += dims.packed_pixels) {
+            const word_offset = data_offset + (x / dims.packed_pixels) * dims.depth;
+            
+            const current_word: *const u16 = @alignCast(@ptrCast(&current_frame[word_offset]));
+            const last_word: *const u16 = @alignCast(@ptrCast(&last_frame[word_offset]));
+            const dest_word: *u16 = @alignCast(@ptrCast(&dest_frame[word_offset]));
+            
+            // Only update pixels that have changed
+            if (current_word.* != last_word.*) {
+                // Check each pixel in the word
+                var pixel_phases: u16 = 0;
+                
+                var pixel_idx: u32 = 0;
+                while (pixel_idx < dims.packed_pixels) : (pixel_idx += 1) {
+                    const shift_amount: u4 = @intCast((dims.packed_pixels - 1 - pixel_idx) * 2);
+                    const pixel_mask: u16 = @as(u16, 0b11) << shift_amount;
+                    
+                    const current_pixel = (current_word.* & pixel_mask) >> shift_amount;
+                    const last_pixel = (last_word.* & pixel_mask) >> shift_amount;
+                    
+                    pixel_phases <<= 2;
+                    if (current_pixel != last_pixel) {
+                        // Pixel changed, apply the phase
+                        pixel_phases |= phase_bits;
+                    } else {
+                        // Pixel unchanged, use Noop
+                        pixel_phases |= @intFromEnum(Phase.Noop);
+                    }
+                }
+                
+                dest_word.* = pixel_phases;
+            }
+        }
+        
+        data_offset += dims.stride;
+    }
+}
+
+fn calculateTextBounds(face: ft.Face, x_pos: u32, y_pos: u32, contents: []const u8) !Rect {
+    var min_x: i32 = @intCast(x_pos);
+    var max_x: i32 = @intCast(x_pos);
+    var min_y: i32 = @intCast(y_pos);
+    var max_y: i32 = @intCast(y_pos);
+    
+    var x: i32 = @intCast(x_pos);
+    var y: i32 = @intCast(y_pos);
+    
+    for (contents) |char| {
+        const idx = face.getCharIndex(char) orelse continue;
+        try face.loadGlyph(idx, .{ .no_hinting = true });
+        
+        const metrics = &face.handle.*.glyph.*.metrics;
+        const glyph_width: i32 = @intCast(metrics.horiAdvance >> 6);
+        const glyph_height: i32 = @intCast(metrics.height >> 6);
+        
+        const x_bearing: i32 = @intCast(metrics.horiBearingX >> 6);
+        const y_bearing: i32 = @intCast(metrics.horiBearingY >> 6);
+        
+        const char_left = x + x_bearing;
+        const char_right = char_left + glyph_width;
+        const char_top = y - y_bearing;
+        const char_bottom = char_top + glyph_height;
+        
+        min_x = @min(min_x, char_left);
+        max_x = @max(max_x, char_right);
+        min_y = @min(min_y, char_top);
+        max_y = @max(max_y, char_bottom);
+        
+        x += glyph_width;
+        if (x >= dims.real_width) {
+            x = dims.left_margin;
+            y += glyph_height;
+        }
+    }
+    
+    return Rect{
+        .x = @max(0, min_x),
+        .y = @max(0, min_y),
+        .width = @max(0, max_x - min_x),
+        .height = @max(0, max_y - min_y),
+    };
 }
 
 fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, phase: Phase) void {

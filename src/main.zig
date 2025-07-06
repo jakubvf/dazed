@@ -34,6 +34,7 @@ pub fn main() !void {
         defer deinitDrawingContext(&drawing_context, allocator);
         
         try drawing_context.clear();
+        return Paint.run(allocator, &drawing_context);
         // return HackerNews.run(allocator, &drawing_context);
     } else {
         const RM2 = @import("display/rm2.zig");
@@ -63,17 +64,12 @@ fn initDrawingContext(allocator: std.mem.Allocator, display_interface: DisplayIn
     const ft_face = try ft_lib.initMemoryFace(@embedFile("fonts/Roboto_Mono/static/RobotoMono-Bold.ttf"), 0);
     try ft_face.selectCharmap(.unicode);
     
-    return DrawingContext{
-        .display = display_interface,
-        .allocator = allocator,
-        .waveform_table = waveform_table,
-        .ft_lib = ft_lib,
-        .ft_face = ft_face,
-    };
+    return DrawingContext.init(allocator, display_interface, waveform_table, ft_lib, ft_face);
 }
 
 fn deinitDrawingContext(drawing_context: *DrawingContext, allocator: std.mem.Allocator) void {
     drawing_context.ft_face.deinit();
     drawing_context.ft_lib.deinit();
     drawing_context.waveform_table.deinit(allocator);
+    drawing_context.deinit();
 }
