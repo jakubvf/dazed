@@ -299,7 +299,10 @@ fn fillFrameWithText(frame: []u8, phase: Waveform.Phase, face: ft.Face, x_pos: u
     var y = y_pos;
 
     for (text) |char| {
-        const idx = face.getCharIndex(char).?;
+        const idx = idx: {
+            // TODO: I should handle more characters.
+            break :idx face.getCharIndex(char) orelse continue;
+        };
         try face.loadGlyph(idx, .{ .no_hinting = true });
         try face.renderGlyph(.normal);
 
@@ -333,7 +336,9 @@ fn drawChar(frame: []u8, bitmap: *ft.c.FT_Bitmap, x_offset: i32, y_offset: i32, 
         var x: i32 = 0;
         while (x < width) : (x += 1) {
             const buffer_x = x + x_offset;
-            const buffer_y = dims.real_height - @as(u32, @intCast((y + y_offset))) - 1;
+            const y_pos = y + y_offset;
+            if (y_pos < 0 or y_pos >= @as(i32, @intCast(dims.real_height))) continue;
+            const buffer_y = dims.real_height - @as(u32, @intCast(y_pos)) - 1;
 
             if (buffer_x >= dims.left_margin and buffer_x < dims.real_width and buffer_y >= dims.upper_margin and buffer_y < dims.real_height) {
                 const bitmap_index: usize = @intCast(y * width + x);

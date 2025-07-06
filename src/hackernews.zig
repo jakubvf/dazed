@@ -2,30 +2,37 @@ const std = @import("std");
 
 const FramebufferDimensions = @import("display/framebuffer_dimensions.zig");
 const dims = FramebufferDimensions.rm2();
+const DrawingContext = @import("display/DrawingContext.zig");
 
-pub fn run(allocator: std.mem.Allocator, display: anytype) !void {
+pub fn run(allocator: std.mem.Allocator, display: *DrawingContext) !void {
     const items = try fetchTopStories(allocator);
     defer items.deinit();
 
-    const first_item_id = items.value[0];
+    const story_count = @min(20, items.value.len);
 
-    const url = try std.fmt.allocPrint(allocator, base_url ++ "/item/{d}.json", .{first_item_id});
-    defer allocator.free(url);
+    for (items.value[0..story_count], 0..) |item_id, index| {
+        const url = try std.fmt.allocPrint(allocator, base_url ++ "/item/{d}.json", .{item_id});
+        defer allocator.free(url);
 
-    const body = try fetch(allocator, url);
-    defer allocator.free(body);
+        const body = try fetch(allocator, url);
+        defer allocator.free(body);
 
-    const first_item = try std.json.parseFromSlice(Item, allocator, body, .{});
-    defer first_item.deinit();
+        const item = try std.json.parseFromSlice(Item, allocator, body, .{});
+        defer item.deinit();
 
+        try drawItem(display, item.value, index);
+    }
 }
 
-fn drawItem(display: anytype, item: Item) !void {
-    const font_size = 64;
-    const top = dims.real_height - dims.upper_margin - font_size;
-    const left = dims.left_margin + font_size;
-    try display.text(left, top, item.value.title.?);
+fn drawItem(display: *DrawingContext, item: Item, index: usize) !void {
+    const font_size = 32;
+    const line_height = font_size + 8;
+    const top = dims.upper_margin + @as(u32, @intCast(index)) * line_height;
+    const left = dims.left_margin;
 
+    if (item.title) |title| {
+        try display.text(left, top, title);
+    }
 }
 
 const base_url = "https://hacker-news.firebaseio.com/v0";
@@ -53,10 +60,10 @@ fn fetch(allocator: std.mem.Allocator, url: []const u8) ![]u8 {
     }
 
     const header_length = request.response.parser.header_bytes_len;
-    std.debug.print("\t> {d} header bytes\n", .{ header_length });
+    std.debug.print("\t> {d} header bytes\n", .{header_length});
 
     const body_length = request.response.content_length orelse return error.NoBodyLength;
-    std.debug.print("\t> {d} body bytes\n", .{ body_length });
+    std.debug.print("\t> {d} body bytes\n", .{body_length});
 
     const body_buffer = try allocator.alloc(u8, body_length);
     _ = try request.readAll(body_buffer);

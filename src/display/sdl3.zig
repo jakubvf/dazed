@@ -191,3 +191,43 @@ pub fn getBackBuffer(self: *Self) []u8 {
 
     return result;
 }
+
+const DisplayInterface = @import("Interface.zig");
+
+pub fn asInterface(self: *Self) DisplayInterface {
+    return DisplayInterface{
+        .ptr = self,
+        .vtable = &.{
+            .getBackBuffer = getBackBufferErased,
+            .pageFlip = pageFlipErased,
+            .getTemperature = getTemperatureErased,
+            .waitForExit = waitForExitErased,
+            .deinit = deinitErased,
+        },
+    };
+}
+
+fn getBackBufferErased(ptr: *anyopaque) []u8 {
+    const self: *Self = @alignCast(@ptrCast(ptr));
+    return self.getBackBuffer();
+}
+
+fn pageFlipErased(ptr: *anyopaque) anyerror!void {
+    const self: *Self = @alignCast(@ptrCast(ptr));
+    return self.pageFlip();
+}
+
+fn getTemperatureErased(ptr: *anyopaque) anyerror!i32 {
+    const self: *Self = @alignCast(@ptrCast(ptr));
+    return self.getTemperature();
+}
+
+fn waitForExitErased(ptr: *anyopaque) void {
+    const self: *Self = @alignCast(@ptrCast(ptr));
+    return self.waitForExit();
+}
+
+fn deinitErased(ptr: *anyopaque) void {
+    const self: *Self = @alignCast(@ptrCast(ptr));
+    return self.deinit();
+}
