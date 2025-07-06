@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addOptions("build_config", options);
     exe.linkLibC();
+    exe.addCSourceFile(.{ .file = b.path("src/display/neon.c") });
 
     const freetype = b.dependency("freetype", .{
         .target = target,

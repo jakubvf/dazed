@@ -6,6 +6,8 @@ waveform_table: Waveform.Table,
 ft_lib: ft.Library,
 ft_face: ft.Face,
 
+extern fn drawCharNeon(frame: *c_char, frame_len: c_ulong, bitmap_buffer: *c_char, bitmap_width: c_int, bitmap_height: c_int, x_offset: c_int, y_offset: c_int, phase: c_ushort) callconv(.C) void;
+
 pub fn clear(self: *Self) !void {
     var prof_scope = profiler.profile("DrawingContext.clear");
     defer prof_scope.deinit();
