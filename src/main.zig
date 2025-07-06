@@ -1,11 +1,14 @@
 const std = @import("std");
 const BuildConfig = @import("build_config");
-const HackerNews = @import("hackernews.zig");
 const DrawingContext = @import("display/DrawingContext.zig");
 const Waveform = @import("display/waveform.zig");
 const ft = @import("freetype");
 const BlankFrame = @import("display/blank_frame.zig");
 const profiler = @import("profiler.zig");
+
+
+const HackerNews = @import("hackernews.zig");
+const Paint = @import("paint.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -31,7 +34,7 @@ pub fn main() !void {
         defer deinitDrawingContext(&drawing_context, allocator);
         
         try drawing_context.clear();
-        return HackerNews.run(allocator, &drawing_context);
+        // return HackerNews.run(allocator, &drawing_context);
     } else {
         const RM2 = @import("display/rm2.zig");
         var controller = try RM2.init(allocator);
@@ -42,7 +45,8 @@ pub fn main() !void {
         defer deinitDrawingContext(&drawing_context, allocator);
         
         try drawing_context.clear();
-        return HackerNews.run(allocator, &drawing_context);
+        // return HackerNews.run(allocator, &drawing_context);
+        return Paint.run(allocator, &drawing_context);
     }
 }
 
