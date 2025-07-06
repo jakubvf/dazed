@@ -5,11 +5,18 @@ const DrawingContext = @import("display/DrawingContext.zig");
 const Waveform = @import("display/waveform.zig");
 const ft = @import("freetype");
 const BlankFrame = @import("display/blank_frame.zig");
+const profiler = @import("profiler.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    try profiler.initGlobal(allocator);
+    defer profiler.deinitGlobal(allocator);
+
+    var prof_scope = profiler.profile("main");
+    defer prof_scope.deinit();
 
     BlankFrame.init(allocator);
     defer BlankFrame.deinit(allocator);

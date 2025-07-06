@@ -2,9 +2,11 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const emulator = b.option(bool, "emulator", "Whether to build for the SDL3 emulator") orelse false;
+    const profiling = b.option(bool, "profiling", "Whether to enable profiling") orelse false;
 
     const options = b.addOptions();
     options.addOption(bool, "emulator", emulator);
+    options.addOption(bool, "profiling", profiling);
 
     const target = t: {
         break :t if (!emulator)

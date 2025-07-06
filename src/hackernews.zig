@@ -3,8 +3,12 @@ const std = @import("std");
 const FramebufferDimensions = @import("display/framebuffer_dimensions.zig");
 const dims = FramebufferDimensions.rm2();
 const DrawingContext = @import("display/DrawingContext.zig");
+const profiler = @import("profiler.zig");
 
 pub fn run(allocator: std.mem.Allocator, display: *DrawingContext) !void {
+    var prof_scope = profiler.profile("hackernews.run");
+    defer prof_scope.deinit();
+
     const items = try fetchTopStories(allocator);
     defer items.deinit();
 
@@ -25,6 +29,9 @@ pub fn run(allocator: std.mem.Allocator, display: *DrawingContext) !void {
 }
 
 fn drawItem(display: *DrawingContext, item: Item, index: usize) !void {
+    var prof_scope = profiler.profile("hackernews.drawItem");
+    defer prof_scope.deinit();
+
     const font_size = 32;
     const line_height = font_size + 8;
     const top = dims.upper_margin + @as(u32, @intCast(index)) * line_height;
@@ -39,6 +46,9 @@ const base_url = "https://hacker-news.firebaseio.com/v0";
 const headers_max_size = 1024;
 
 fn fetch(allocator: std.mem.Allocator, url: []const u8) ![]u8 {
+    var prof_scope = profiler.profile("hackernews.fetch");
+    defer prof_scope.deinit();
+
     std.debug.print("fetching {s}:\n", .{url});
     const uri = try std.Uri.parse(url);
 
@@ -65,13 +75,16 @@ fn fetch(allocator: std.mem.Allocator, url: []const u8) ![]u8 {
     const body_length = request.response.content_length orelse return error.NoBodyLength;
     std.debug.print("\t> {d} body bytes\n", .{body_length});
 
-    const body_buffer = try allocator.alloc(u8, body_length);
+    const body_buffer = try allocator.alloc(u8, @truncate(body_length));
     _ = try request.readAll(body_buffer);
 
     return body_buffer;
 }
 
 fn fetchTopStories(allocator: std.mem.Allocator) !std.json.Parsed([]ItemId) {
+    var prof_scope = profiler.profile("hackernews.fetchTopStories");
+    defer prof_scope.deinit();
+
     const body = try fetch(allocator, base_url ++ "/topstories.json");
     defer allocator.free(body);
 

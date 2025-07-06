@@ -7,6 +7,9 @@ ft_lib: ft.Library,
 ft_face: ft.Face,
 
 pub fn clear(self: *Self) !void {
+    var prof_scope = profiler.profile("DrawingContext.clear");
+    defer prof_scope.deinit();
+
     const waveform = try self.waveform_table.lookup(0, @intCast(try self.display.getTemperature()));
 
     const white_frame = try self.allocator.alloc(u8, dims.frame_size);
@@ -36,6 +39,9 @@ pub fn clear(self: *Self) !void {
 }
 
 pub fn rectangle(self: *Self, rect: Rect) !void {
+    var prof_scope = profiler.profile("DrawingContext.rectangle");
+    defer prof_scope.deinit();
+
     const a2 = 6;
     const waveform = try self.waveform_table.lookup(a2, @intCast(try self.display.getTemperature()));
 
@@ -68,6 +74,9 @@ pub fn rectangle(self: *Self, rect: Rect) !void {
 }
 
 pub fn text(self: *Self, x: u32, y: u32, string: []const u8) !void {
+    var prof_scope = profiler.profile("DrawingContext.text");
+    defer prof_scope.deinit();
+
     const a2 = 6;
     const waveform = try self.waveform_table.lookup(a2, @intCast(try self.display.getTemperature()));
 
@@ -108,6 +117,7 @@ const Phase = Waveform.Phase;
 const FramebufferDimensions = @import("framebuffer_dimensions.zig");
 const dims = FramebufferDimensions.rm2();
 const BlankFrame = @import("blank_frame.zig");
+const profiler = @import("../profiler.zig");
 
 // Helper functions copied from display.zig
 fn fillFrameWithOp(frame: []u8, phase: Phase) void {
@@ -191,6 +201,9 @@ fn setPixel(frame: []u8, phase: Phase, x: u32, y: u32) void {
 }
 
 fn fillFrameWithText(frame: []u8, phase: Waveform.Phase, face: ft.Face, x_pos: u32, y_pos: u32, contents: []const u8) !void {
+    var prof_scope = profiler.profile("fillFrameWithText");
+    defer prof_scope.deinit();
+
     var x = x_pos;
     var y = y_pos;
 
